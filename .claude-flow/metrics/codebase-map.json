@@ -1,0 +1,11 @@
+{
+  "timestamp": "2026-03-17T13:14:14.048Z",
+  "projectRoot": "/workspaces/nature-risk",
+  "structure": {
+    "hasPackageJson": false,
+    "hasTsConfig": false,
+    "hasClaudeConfig": true,
+    "hasClaudeFlow": true
+  },
+  "scannedAt": 1773753254048
+}

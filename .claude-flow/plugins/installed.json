@@ -1,0 +1,16 @@
+{
+  "version": "1.0.0",
+  "lastUpdated": "2026-03-17T13:24:58.651Z",
+  "plugins": {
+    "@claude-flow/plugin-agentic-qe": {
+      "name": "@claude-flow/plugin-agentic-qe",
+      "version": "3.0.0-alpha.4",
+      "installedAt": "2026-03-17T13:24:58.651Z",
+      "enabled": true,
+      "source": "npm",
+      "path": "/workspaces/nature-risk/.claude-flow/plugins/node_modules/@claude-flow/plugin-agentic-qe",
+      "commands": [],
+      "hooks": []
+    }
+  }
+}

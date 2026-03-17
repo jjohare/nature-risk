@@ -1,0 +1,2241 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="Nature Risk — Co-Pilot + Map interface for natural capital impact analysis across UK assets." />
+  <title>Nature Risk — Analysis Co-Pilot</title>
+
+  <!-- Leaflet 1.9.4 -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+        integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
+  <!-- Leaflet.draw -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.css" crossorigin="" />
+
+  <style>
+    /* ── Reset & Base ───────────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg-base:        #0a1628;
+      --bg-surface:     #0f2035;
+      --bg-elevated:    #142843;
+      --bg-card:        rgba(15, 32, 53, 0.92);
+      --border-subtle:  rgba(255,255,255,0.07);
+      --border-glow:    rgba(52,211,153,0.25);
+      --border-blue:    rgba(59,130,246,0.3);
+      --text-primary:   #f1f5f9;
+      --text-secondary: #94a3b8;
+      --text-muted:     #475569;
+      --green:          #34d399;
+      --green-dim:      #10b981;
+      --blue:           #3b82f6;
+      --blue-dim:       #2563eb;
+      --teal:           #06b6d4;
+      --amber:          #f59e0b;
+      --red:            #ef4444;
+      --font:           -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, sans-serif;
+      --mono:           "JetBrains Mono", "Fira Code", "Cascadia Code", "Consolas", monospace;
+      --radius:         12px;
+      --radius-sm:      8px;
+      --radius-lg:      20px;
+      --panel-left:     40%;
+      --panel-right:    60%;
+    }
+
+    html, body {
+      height: 100%;
+      overflow: hidden;
+      font-family: var(--font);
+      background: var(--bg-base);
+      color: var(--text-primary);
+      line-height: 1.6;
+    }
+
+    /* ── Scrollbar ──────────────────────────────────────────────────── */
+    ::-webkit-scrollbar { width: 5px; }
+    ::-webkit-scrollbar-track { background: var(--bg-base); }
+    ::-webkit-scrollbar-thumb { background: #1e3a5f; border-radius: 3px; }
+
+    /* ── Demo Banner ────────────────────────────────────────────────── */
+    #demo-banner {
+      position: fixed;
+      top: 0; left: 0; right: 0;
+      z-index: 9999;
+      background: linear-gradient(90deg, rgba(245,158,11,0.15), rgba(245,158,11,0.08));
+      border-bottom: 1px solid rgba(245,158,11,0.4);
+      padding: 8px 20px;
+      font-size: 0.78rem;
+      color: var(--amber);
+      text-align: center;
+      display: none;
+    }
+    #demo-banner.visible { display: block; }
+    #demo-banner strong { font-weight: 600; }
+    #demo-banner a { color: var(--amber); text-decoration: underline; }
+
+    /* ── App Shell ──────────────────────────────────────────────────── */
+    #app {
+      display: flex;
+      height: 100vh;
+      overflow: hidden;
+    }
+    #app.has-banner {
+      padding-top: 36px;
+      height: calc(100vh - 36px);
+    }
+
+    /* ── Left Pane: Co-Pilot ────────────────────────────────────────── */
+    #copilot {
+      width: var(--panel-left);
+      min-width: 340px;
+      display: flex;
+      flex-direction: column;
+      background: var(--bg-surface);
+      border-right: 1px solid var(--border-subtle);
+      overflow: hidden;
+      z-index: 10;
+    }
+
+    /* ── Right Pane: Map ────────────────────────────────────────────── */
+    #map-pane {
+      flex: 1;
+      position: relative;
+      overflow: hidden;
+    }
+
+    #map {
+      width: 100%;
+      height: 100%;
+    }
+
+    /* ── Co-Pilot Header ────────────────────────────────────────────── */
+    #copilot-header {
+      padding: 14px 18px 12px;
+      border-bottom: 1px solid var(--border-subtle);
+      background: rgba(10,22,40,0.6);
+      backdrop-filter: blur(8px);
+      flex-shrink: 0;
+    }
+
+    .header-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 12px;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .brand-icon {
+      width: 32px;
+      height: 32px;
+      background: linear-gradient(135deg, var(--green), var(--teal));
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 16px;
+      flex-shrink: 0;
+    }
+
+    .brand-text {
+      font-size: 1.05rem;
+      font-weight: 700;
+      color: var(--text-primary);
+      letter-spacing: -0.3px;
+    }
+    .brand-text span {
+      color: var(--green);
+    }
+
+    .mode-badge {
+      font-size: 0.7rem;
+      font-weight: 600;
+      font-family: var(--mono);
+      padding: 3px 10px;
+      border-radius: 99px;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+      transition: all 0.3s ease;
+    }
+    .mode-badge.inland {
+      background: rgba(59,130,246,0.15);
+      border: 1px solid rgba(59,130,246,0.35);
+      color: var(--blue);
+    }
+    .mode-badge.coastal {
+      background: rgba(6,182,212,0.15);
+      border: 1px solid rgba(6,182,212,0.35);
+      color: var(--teal);
+    }
+    .mode-badge.mixed {
+      background: rgba(52,211,153,0.15);
+      border: 1px solid rgba(52,211,153,0.35);
+      color: var(--green);
+    }
+
+    .back-link {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      text-decoration: none;
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      transition: color 0.2s;
+    }
+    .back-link:hover { color: var(--text-secondary); }
+    .back-link svg { width: 12px; height: 12px; }
+
+    /* ── Mode Selector ──────────────────────────────────────────────── */
+    .mode-selector {
+      display: flex;
+      gap: 6px;
+      background: rgba(10,22,40,0.6);
+      border-radius: var(--radius-sm);
+      padding: 3px;
+    }
+
+    .mode-btn {
+      flex: 1;
+      padding: 7px 10px;
+      border: 1px solid transparent;
+      border-radius: 6px;
+      background: transparent;
+      color: var(--text-secondary);
+      font-size: 0.78rem;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      font-family: var(--font);
+    }
+    .mode-btn:focus-visible {
+      outline: 2px solid var(--green);
+      outline-offset: 2px;
+    }
+    .mode-btn.active {
+      background: var(--bg-elevated);
+      color: var(--text-primary);
+      border-color: var(--border-subtle);
+    }
+    .mode-btn.active.asset {
+      border-color: var(--border-blue);
+      color: var(--blue);
+    }
+    .mode-btn.active.developer {
+      border-color: var(--border-glow);
+      color: var(--green);
+    }
+
+    /* ── Co-Pilot Body ──────────────────────────────────────────────── */
+    #copilot-body {
+      flex: 1;
+      overflow-y: auto;
+      padding: 14px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    /* ── Action Stream ──────────────────────────────────────────────── */
+    #action-stream {
+      background: var(--bg-elevated);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius);
+      overflow: hidden;
+    }
+
+    .stream-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 14px;
+      cursor: pointer;
+      user-select: none;
+    }
+    .stream-header:hover { background: rgba(255,255,255,0.03); }
+
+    .stream-title {
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--text-secondary);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .stream-spinner {
+      width: 10px; height: 10px;
+      border-radius: 50%;
+      border: 2px solid rgba(52,211,153,0.2);
+      border-top-color: var(--green);
+      animation: spin 0.8s linear infinite;
+      display: none;
+    }
+    .stream-spinner.active { display: block; }
+
+    .stream-chevron {
+      color: var(--text-muted);
+      font-size: 0.7rem;
+      transition: transform 0.2s;
+    }
+    .stream-chevron.open { transform: rotate(180deg); }
+
+    .stream-steps {
+      padding: 0 14px 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .stream-steps.collapsed { display: none; }
+
+    .stream-step {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 0.78rem;
+      color: var(--text-muted);
+      padding: 4px 0;
+      opacity: 0;
+      transform: translateX(-6px);
+      transition: opacity 0.3s ease, transform 0.3s ease;
+    }
+    .stream-step.visible {
+      opacity: 1;
+      transform: translateX(0);
+    }
+    .stream-step.done { color: var(--text-secondary); }
+    .stream-step.running { color: var(--green); }
+
+    .step-icon {
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 9px;
+      flex-shrink: 0;
+    }
+    .step-icon.pending {
+      background: rgba(71,85,105,0.4);
+      color: var(--text-muted);
+    }
+    .step-icon.running {
+      background: rgba(52,211,153,0.15);
+      border: 1.5px solid var(--green);
+      color: var(--green);
+    }
+    .step-icon.running::after {
+      content: '';
+      display: block;
+      width: 6px; height: 6px;
+      border-radius: 50%;
+      border: 1.5px solid transparent;
+      border-top-color: var(--green);
+      animation: spin 0.7s linear infinite;
+    }
+    .step-icon.done {
+      background: rgba(52,211,153,0.15);
+      color: var(--green);
+    }
+    .step-icon.error {
+      background: rgba(239,68,68,0.15);
+      color: var(--red);
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    .stream-summary {
+      font-size: 0.78rem;
+      color: var(--green);
+      padding: 4px 14px 10px;
+      display: none;
+    }
+    .stream-summary.visible { display: block; }
+
+    /* ── Results Area ───────────────────────────────────────────────── */
+    #results-area {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    #results-area:empty::before {
+      content: 'Draw a polygon or place a marker on the map, then type your query and click Analyse.';
+      display: block;
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      text-align: center;
+      padding: 24px 12px;
+      border: 1px dashed var(--border-subtle);
+      border-radius: var(--radius);
+      line-height: 1.6;
+    }
+
+    /* ── Cards ──────────────────────────────────────────────────────── */
+    .card {
+      background: var(--bg-elevated);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius);
+      padding: 14px 16px;
+    }
+
+    .card-label {
+      font-size: 0.7rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+      color: var(--text-muted);
+      margin-bottom: 10px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .card-label .dot {
+      width: 6px; height: 6px;
+      border-radius: 50%;
+      background: var(--green);
+    }
+    .card-label .dot.blue { background: var(--blue); }
+    .card-label .dot.amber { background: var(--amber); }
+
+    /* ── Risk Delta Card ────────────────────────────────────────────── */
+    .risk-delta {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+
+    .risk-metric {
+      background: rgba(10,22,40,0.5);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-sm);
+      padding: 12px;
+    }
+
+    .risk-metric-value {
+      font-family: var(--mono);
+      font-size: 1.6rem;
+      font-weight: 700;
+      color: var(--green);
+      line-height: 1;
+      margin-bottom: 4px;
+    }
+    .risk-metric-value.blue { color: var(--blue); }
+    .risk-metric-value.teal { color: var(--teal); }
+    .risk-metric-value.amber { color: var(--amber); }
+
+    .risk-metric-label {
+      font-size: 0.72rem;
+      color: var(--text-secondary);
+    }
+
+    .risk-metric-sub {
+      font-family: var(--mono);
+      font-size: 0.68rem;
+      color: var(--text-muted);
+      margin-top: 2px;
+    }
+
+    /* ── Confidence Badge ───────────────────────────────────────────── */
+    .confidence-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+
+    .confidence-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      padding: 5px 12px;
+      border-radius: 99px;
+      font-family: var(--mono);
+    }
+    .confidence-badge.high {
+      background: rgba(52,211,153,0.12);
+      border: 1px solid rgba(52,211,153,0.3);
+      color: var(--green);
+    }
+    .confidence-badge.medium {
+      background: rgba(245,158,11,0.12);
+      border: 1px solid rgba(245,158,11,0.3);
+      color: var(--amber);
+    }
+    .confidence-badge.low {
+      background: rgba(239,68,68,0.12);
+      border: 1px solid rgba(239,68,68,0.3);
+      color: var(--red);
+    }
+    .confidence-dot {
+      width: 7px; height: 7px;
+      border-radius: 50%;
+      background: currentColor;
+    }
+
+    .uncertainty-range {
+      font-family: var(--mono);
+      font-size: 0.75rem;
+      color: var(--text-secondary);
+    }
+
+    /* ── Opportunity Zones ──────────────────────────────────────────── */
+    .zone-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .zone-card {
+      background: rgba(10,22,40,0.5);
+      border: 1px solid var(--border-subtle);
+      border-left: 3px solid var(--green);
+      border-radius: var(--radius-sm);
+      padding: 10px 12px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+    .zone-card:hover {
+      background: rgba(52,211,153,0.05);
+      border-color: var(--border-glow);
+      border-left-color: var(--green);
+    }
+    .zone-card:focus-visible {
+      outline: 2px solid var(--green);
+      outline-offset: 2px;
+    }
+    .zone-card.rank-2 { border-left-color: var(--blue); }
+    .zone-card.rank-3 { border-left-color: var(--teal); }
+
+    .zone-name {
+      font-weight: 600;
+      font-size: 0.83rem;
+      color: var(--text-primary);
+      margin-bottom: 4px;
+    }
+
+    .zone-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+
+    .zone-tag {
+      font-size: 0.68rem;
+      font-family: var(--mono);
+      padding: 2px 7px;
+      border-radius: 4px;
+      background: rgba(255,255,255,0.06);
+      color: var(--text-secondary);
+    }
+
+    .zone-impact {
+      font-family: var(--mono);
+      font-size: 0.78rem;
+      color: var(--green);
+      font-weight: 600;
+    }
+
+    /* ── Data Sources ───────────────────────────────────────────────── */
+    .data-sources {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 5px;
+    }
+
+    .ds-tag {
+      font-size: 0.67rem;
+      font-family: var(--mono);
+      padding: 2px 8px;
+      border-radius: 4px;
+      background: rgba(59,130,246,0.08);
+      border: 1px solid rgba(59,130,246,0.2);
+      color: var(--blue);
+    }
+
+    /* ── Disclaimer ─────────────────────────────────────────────────── */
+    .disclaimer {
+      font-size: 0.7rem;
+      color: var(--text-muted);
+      line-height: 1.5;
+      padding: 10px 12px;
+      border: 1px solid rgba(71,85,105,0.3);
+      border-radius: var(--radius-sm);
+      background: rgba(10,22,40,0.4);
+    }
+
+    /* ── Export Button ──────────────────────────────────────────────── */
+    #copilot-footer {
+      padding: 12px 16px;
+      border-top: 1px solid var(--border-subtle);
+      background: rgba(10,22,40,0.5);
+      flex-shrink: 0;
+    }
+
+    #export-btn {
+      width: 100%;
+      padding: 10px 16px;
+      background: linear-gradient(135deg, rgba(52,211,153,0.12), rgba(59,130,246,0.08));
+      border: 1px solid var(--border-glow);
+      border-radius: var(--radius-sm);
+      color: var(--green);
+      font-size: 0.82rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      font-family: var(--font);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+    #export-btn:hover {
+      background: linear-gradient(135deg, rgba(52,211,153,0.2), rgba(59,130,246,0.12));
+      border-color: var(--green);
+    }
+    #export-btn:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+    #export-btn:focus-visible {
+      outline: 2px solid var(--green);
+      outline-offset: 2px;
+    }
+
+    /* ── Chat Input ─────────────────────────────────────────────────── */
+    .chat-row {
+      display: flex;
+      gap: 8px;
+    }
+
+    #chat-input {
+      flex: 1;
+      padding: 9px 12px;
+      background: var(--bg-elevated);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-sm);
+      color: var(--text-primary);
+      font-size: 0.83rem;
+      font-family: var(--font);
+      outline: none;
+      transition: border-color 0.2s;
+      resize: none;
+    }
+    #chat-input::placeholder { color: var(--text-muted); }
+    #chat-input:focus { border-color: var(--border-glow); }
+
+    #analyse-btn {
+      padding: 9px 16px;
+      background: linear-gradient(135deg, var(--green-dim), #059669);
+      border: none;
+      border-radius: var(--radius-sm);
+      color: #ffffff;
+      font-size: 0.82rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      font-family: var(--font);
+      white-space: nowrap;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      min-width: 90px;
+      justify-content: center;
+    }
+    #analyse-btn:hover {
+      background: linear-gradient(135deg, var(--green), var(--green-dim));
+      transform: translateY(-1px);
+    }
+    #analyse-btn:active { transform: translateY(0); }
+    #analyse-btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+      transform: none;
+    }
+    #analyse-btn:focus-visible {
+      outline: 2px solid var(--green);
+      outline-offset: 2px;
+    }
+    #analyse-btn .btn-spinner {
+      width: 13px; height: 13px;
+      border-radius: 50%;
+      border: 2px solid rgba(255,255,255,0.3);
+      border-top-color: white;
+      animation: spin 0.7s linear infinite;
+      display: none;
+    }
+    #analyse-btn.loading .btn-spinner { display: block; }
+    #analyse-btn.loading .btn-label { display: none; }
+
+    /* ── Map Overlays ───────────────────────────────────────────────── */
+    #map-controls {
+      position: absolute;
+      top: 12px;
+      right: 12px;
+      z-index: 1000;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .map-control-btn {
+      padding: 7px 14px;
+      background: rgba(15,32,53,0.92);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-sm);
+      color: var(--text-secondary);
+      font-size: 0.75rem;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.2s;
+      font-family: var(--font);
+      backdrop-filter: blur(8px);
+      white-space: nowrap;
+    }
+    .map-control-btn:hover {
+      background: rgba(20,40,67,0.95);
+      color: var(--text-primary);
+      border-color: var(--border-glow);
+    }
+    .map-control-btn.active {
+      border-color: var(--border-glow);
+      color: var(--green);
+      background: rgba(52,211,153,0.08);
+    }
+    .map-control-btn:focus-visible {
+      outline: 2px solid var(--green);
+      outline-offset: 2px;
+    }
+
+    #map-info {
+      position: absolute;
+      bottom: 30px;
+      left: 12px;
+      z-index: 1000;
+      background: rgba(15,32,53,0.92);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-sm);
+      padding: 8px 12px;
+      font-size: 0.72rem;
+      color: var(--text-secondary);
+      backdrop-filter: blur(8px);
+      max-width: 280px;
+    }
+    #map-info .coords {
+      font-family: var(--mono);
+      color: var(--green);
+      font-size: 0.7rem;
+    }
+
+    /* ── Coastal Asset List ─────────────────────────────────────────── */
+    .asset-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .asset-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 10px;
+      background: rgba(10,22,40,0.5);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-sm);
+      font-size: 0.8rem;
+    }
+
+    .asset-dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: var(--teal);
+      flex-shrink: 0;
+    }
+
+    .asset-name { color: var(--text-primary); font-weight: 500; }
+    .asset-stat {
+      margin-left: auto;
+      font-family: var(--mono);
+      font-size: 0.75rem;
+      color: var(--teal);
+      font-weight: 600;
+    }
+
+    /* ── Map attribution override ───────────────────────────────────── */
+    .leaflet-control-attribution {
+      background: rgba(10,22,40,0.8) !important;
+      color: var(--text-muted) !important;
+      font-size: 10px !important;
+    }
+    .leaflet-control-attribution a { color: var(--text-secondary) !important; }
+
+    .leaflet-control-zoom {
+      border: 1px solid var(--border-subtle) !important;
+      border-radius: 8px !important;
+      overflow: hidden;
+    }
+    .leaflet-control-zoom-in,
+    .leaflet-control-zoom-out {
+      background: rgba(15,32,53,0.92) !important;
+      color: var(--text-secondary) !important;
+      border: none !important;
+    }
+    .leaflet-control-zoom-in:hover,
+    .leaflet-control-zoom-out:hover {
+      background: rgba(20,40,67,0.95) !important;
+      color: var(--text-primary) !important;
+    }
+
+    /* ── Draw controls theming ──────────────────────────────────────── */
+    .leaflet-draw-toolbar a {
+      background-color: rgba(15,32,53,0.92) !important;
+      color: var(--text-secondary) !important;
+    }
+    .leaflet-draw-toolbar a:hover {
+      background-color: rgba(20,40,67,0.95) !important;
+    }
+    .leaflet-draw-actions a {
+      background: var(--bg-elevated) !important;
+      color: var(--text-secondary) !important;
+      font-size: 11px !important;
+    }
+
+    /* ── Hydrograph ─────────────────────────────────────────────────── */
+    .hydrograph-container {
+      position: relative;
+      height: 100px;
+      background: rgba(10,22,40,0.5);
+      border-radius: var(--radius-sm);
+      overflow: hidden;
+      border: 1px solid var(--border-subtle);
+    }
+
+    .hydrograph-canvas {
+      width: 100%;
+      height: 100%;
+    }
+
+    .hydrograph-legend {
+      position: absolute;
+      bottom: 6px; right: 8px;
+      display: flex;
+      gap: 10px;
+      font-size: 0.65rem;
+      font-family: var(--mono);
+    }
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      color: var(--text-muted);
+    }
+    .legend-dot {
+      width: 8px; height: 2px;
+      border-radius: 1px;
+    }
+
+    /* ── Responsive ─────────────────────────────────────────────────── */
+    @media (max-width: 1024px) {
+      :root {
+        --panel-left: 45%;
+      }
+    }
+
+    @media (max-width: 768px) {
+      #app {
+        flex-direction: column;
+      }
+      #copilot {
+        width: 100%;
+        min-width: unset;
+        height: 55vh;
+        border-right: none;
+        border-bottom: 1px solid var(--border-subtle);
+      }
+      #map-pane {
+        height: 45vh;
+        flex: none;
+      }
+    }
+
+    @media (max-width: 480px) {
+      #copilot { height: 60vh; }
+      #map-pane { height: 40vh; }
+    }
+
+    /* ── Fade-in ────────────────────────────────────────────────────── */
+    .fade-in {
+      animation: fadeIn 0.4s ease forwards;
+    }
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(6px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    /* ── Pulse ──────────────────────────────────────────────────────── */
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+    .pulsing { animation: pulse 1.5s ease-in-out infinite; }
+
+    /* ── Flood overlay legend ───────────────────────────────────────── */
+    #overlay-legend {
+      position: absolute;
+      bottom: 60px;
+      right: 12px;
+      z-index: 1000;
+      background: rgba(15,32,53,0.92);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-sm);
+      padding: 10px 12px;
+      font-size: 0.72rem;
+      backdrop-filter: blur(8px);
+      display: none;
+    }
+    #overlay-legend.visible { display: block; }
+    #overlay-legend h4 {
+      font-size: 0.7rem;
+      font-weight: 600;
+      color: var(--text-secondary);
+      text-transform: uppercase;
+      letter-spacing: 0.4px;
+      margin-bottom: 8px;
+    }
+    .legend-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 5px;
+      color: var(--text-secondary);
+    }
+    .legend-swatch {
+      width: 16px; height: 10px;
+      border-radius: 2px;
+      flex-shrink: 0;
+    }
+  </style>
+</head>
+<body>
+
+<!-- Demo Banner -->
+<div id="demo-banner" role="alert" aria-live="polite">
+  <strong>Demo Mode</strong> — No API key configured.
+  Results are simulated using mock data.
+  <a href="https://github.com/ruvnet/nature-risk" target="_blank" rel="noopener">Configure API key</a>
+</div>
+
+<!-- App Shell -->
+<div id="app" role="main">
+
+  <!-- Left Pane: Co-Pilot -->
+  <aside id="copilot" aria-label="Nature Risk Co-Pilot panel">
+
+    <!-- Header -->
+    <header id="copilot-header">
+      <div class="header-top">
+        <div class="brand">
+          <div class="brand-icon" aria-hidden="true">&#127807;</div>
+          <div class="brand-text">Nature<span>Risk</span></div>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px;">
+          <span id="mode-badge" class="mode-badge inland" role="status" aria-live="polite" aria-label="Current analysis mode">Inland</span>
+          <a href="../index.html" class="back-link" aria-label="Back to Nature Risk home page">
+            <svg viewBox="0 0 12 12" fill="none" aria-hidden="true">
+              <path d="M8 2L4 6l4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            Home
+          </a>
+        </div>
+      </div>
+
+      <!-- Mode selector -->
+      <div class="mode-selector" role="group" aria-label="User mode selection">
+        <button class="mode-btn active asset" id="btn-asset-manager"
+                role="radio" aria-checked="true"
+                aria-label="Asset Manager mode — analyse risk to existing assets">
+          Asset Manager
+        </button>
+        <button class="mode-btn developer" id="btn-project-developer"
+                role="radio" aria-checked="false"
+                aria-label="Project Developer mode — analyse benefit of proposed interventions">
+          Project Developer
+        </button>
+      </div>
+    </header>
+
+    <!-- Body -->
+    <div id="copilot-body" tabindex="-1" aria-label="Analysis results and action stream">
+
+      <!-- Action Stream -->
+      <section id="action-stream" aria-label="Analysis progress stream">
+        <div class="stream-header" role="button" tabindex="0"
+             aria-expanded="true" aria-controls="stream-steps"
+             id="stream-toggle" onclick="toggleStream()" onkeypress="if(event.key==='Enter'||event.key===' ')toggleStream()">
+          <div class="stream-title">
+            <div class="stream-spinner" id="stream-spinner" aria-hidden="true"></div>
+            Agent Steps
+          </div>
+          <span class="stream-chevron open" id="stream-chevron" aria-hidden="true">&#9660;</span>
+        </div>
+        <div class="stream-steps" id="stream-steps" role="list">
+          <!-- Steps injected by JS -->
+        </div>
+        <div class="stream-summary" id="stream-summary" aria-live="polite"></div>
+      </section>
+
+      <!-- Results Area -->
+      <div id="results-area" aria-live="polite" aria-label="Analysis results">
+        <!-- Results injected by JS -->
+      </div>
+
+    </div>
+
+    <!-- Footer: Export + Chat -->
+    <footer id="copilot-footer">
+      <button id="export-btn" disabled aria-label="Export analysis as PDF report" onclick="exportPDF()">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="M12 16l-4-4h3V4h2v8h3l-4 4z" fill="currentColor"/>
+          <path d="M4 18h16v2H4v-2z" fill="currentColor"/>
+        </svg>
+        Export Board PDF
+      </button>
+      <div class="chat-row">
+        <textarea id="chat-input" rows="2" placeholder="e.g. What upstream restoration would best protect this asset from flood risk?" aria-label="Analysis query input"></textarea>
+        <button id="analyse-btn" onclick="runAnalysis()" aria-label="Run analysis">
+          <span class="btn-label">Analyse</span>
+          <div class="btn-spinner" aria-hidden="true"></div>
+        </button>
+      </div>
+    </footer>
+  </aside>
+
+  <!-- Right Pane: Map -->
+  <section id="map-pane" aria-label="Interactive map">
+    <div id="map" role="application" aria-label="Leaflet interactive map — draw polygons or place markers to define your area of interest"></div>
+
+    <!-- Map controls -->
+    <div id="map-controls" role="group" aria-label="Map layer controls">
+      <button class="map-control-btn" id="btn-flood-layer"
+              onclick="toggleFloodLayer()" aria-pressed="false"
+              aria-label="Toggle EA flood risk overlay">
+        &#9730; Flood Zones
+      </button>
+      <button class="map-control-btn" id="btn-terrain-layer"
+              onclick="toggleTerrainLayer()" aria-pressed="false"
+              aria-label="Toggle terrain shading layer">
+        &#9968; Terrain
+      </button>
+      <button class="map-control-btn" id="btn-risk-overlay"
+              onclick="toggleRiskOverlay()" aria-pressed="false"
+              aria-label="Toggle risk reduction overlay">
+        &#9651; Risk Overlay
+      </button>
+    </div>
+
+    <!-- Flood zone legend -->
+    <div id="overlay-legend" role="complementary" aria-label="Flood zone legend">
+      <h4>EA Flood Zones</h4>
+      <div class="legend-row">
+        <div class="legend-swatch" style="background:rgba(59,130,246,0.55)"></div>
+        Zone 3 — High Risk
+      </div>
+      <div class="legend-row">
+        <div class="legend-swatch" style="background:rgba(99,179,237,0.45)"></div>
+        Zone 2 — Medium Risk
+      </div>
+      <div class="legend-row">
+        <div class="legend-swatch" style="background:rgba(52,211,153,0.25)"></div>
+        Zone 1 — Low Risk
+      </div>
+    </div>
+
+    <!-- Map info bar -->
+    <div id="map-info" aria-live="polite">
+      <div>Click map to place asset pin &bull; Use draw toolbar to mark intervention area</div>
+      <div class="coords" id="map-coords" aria-label="Map coordinates"></div>
+    </div>
+  </section>
+</div>
+
+<!-- Scripts -->
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+        integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV/XN/WLs=" crossorigin=""></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.js" crossorigin=""></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js" crossorigin=""></script>
+
+<script>
+/* ────────────────────────────────────────────────────────────────────
+   Nature Risk — Analysis Co-Pilot
+   Version: 1.0.0
+   Architecture: Static single-page, Leaflet + Leaflet.draw + jsPDF
+   ──────────────────────────────────────────────────────────────────── */
+
+// ── State ─────────────────────────────────────────────────────────── //
+const AppState = {
+  userMode: 'asset-manager',   // 'asset-manager' | 'project-developer'
+  analysisMode: 'inland',      // 'inland' | 'coastal' | 'mixed'
+  analysing: false,
+  hasResults: false,
+  lastResults: null,
+  drawnLayers: [],
+  assetMarker: null,
+  floodLayerActive: false,
+  terrainLayerActive: false,
+  riskOverlayActive: false,
+  mapCenter: [52.37, -2.31],   // Bewdley / River Severn catchment
+  streamCollapsed: false,
+};
+
+// ── Demo / API detection ──────────────────────────────────────────── //
+const isDemoMode = !window.ANTHROPIC_API_KEY;
+if (isDemoMode) {
+  document.getElementById('demo-banner').classList.add('visible');
+  document.getElementById('app').classList.add('has-banner');
+}
+
+// ── Mock Results ──────────────────────────────────────────────────── //
+const MOCK_INLAND = {
+  mode: 'inland',
+  peakFlowReduction: 12,
+  unit: '%',
+  uncertainty: 3,
+  floodHeightReduction: 0.34,
+  delayHours: 2.1,
+  confidence: 'Medium',
+  dataSources: ['EA LIDAR 1m', 'BGS Soilscapes', 'UKCEH Land Cover'],
+  opportunityZones: [
+    { name: 'Upper Severn Peatland', area: 4.2, type: 'Peat Restoration', reduction: 7 },
+    { name: 'Ironbridge Riparian Woodland', area: 2.1, type: 'Tree Planting', reduction: 3 },
+    { name: 'Bewdley Leaky Dam Network', area: 0.8, type: 'Leaky Dams', reduction: 2 },
+  ],
+  narrative: 'Analysis of the River Severn upper catchment identifies three high-priority natural capital interventions. Peat restoration in the upper catchment offers the greatest peak flow attenuation, reducing Q-peak by approximately 7% at the Bewdley gauge. Riparian woodland planting along Ironbridge reaches provides additional interception and roughness increase. A leaky dam network in the Bewdley sub-catchment delivers rapid, low-cost flow delay benefits.',
+};
+
+const MOCK_COASTAL = {
+  mode: 'coastal',
+  waveEnergyReduction: 38,
+  unit: '%',
+  uncertainty: 8,
+  stormSurgeReduction: 0.22,
+  erosionDelta: 14,
+  confidence: 'Medium',
+  dataSources: ['UKHO Bathymetry', 'NTSLF Tidal Data', 'EA NCERM'],
+  habitats: [
+    { name: 'Saltmarsh Restoration', area: 3.1, attenuation: '20–70%', maturation: '5–10 yrs' },
+    { name: 'Oyster Reef Structure', area: 1.8, attenuation: '15–50%', maturation: '3–5 yrs' },
+    { name: 'Seagrass Meadow', area: 2.4, attenuation: '10–40%', maturation: '5–8 yrs' },
+  ],
+  narrative: 'Coastal habitat restoration in the proposed zone demonstrates significant wave attenuation potential. The combined saltmarsh and oyster reef configuration would reduce significant wave height by approximately 38% before reaching the onshore asset. Storm surge dissipation is estimated at 0.22 m under 1-in-100-year return period conditions. All values carry ± 20% inter-annual variability due to storm disturbance effects.',
+};
+
+// ── Action Stream Steps by Mode ───────────────────────────────────── //
+const STEPS_INLAND = [
+  'Detecting mode from coordinates...',
+  'Tracing catchment via EA LIDAR...',
+  'Validating intervention placement via BGS Soilscapes...',
+  'Querying OS Open Rivers network...',
+  'Calculating water retention delta...',
+  'Applying Met Office UKCP18 rainfall...',
+  'Computing risk delta...',
+  'Generating confidence score...',
+];
+
+const STEPS_COASTAL = [
+  'Detecting mode from coordinates...',
+  'Querying UKHO Bathymetry profile...',
+  'Fetching NTSLF tidal data...',
+  'Loading EA NCERM erosion mapping...',
+  'Applying UKCP18 sea-level rise (2050)...',
+  'Calculating wave attenuation...',
+  'Computing storm surge reduction...',
+  'Generating confidence score...',
+];
+
+// ── Map Initialisation ────────────────────────────────────────────── //
+const map = L.map('map', {
+  center: AppState.mapCenter,
+  zoom: 10,
+  zoomControl: true,
+  attributionControl: true,
+});
+
+// OSM base tiles
+const osmTiles = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+  maxZoom: 19,
+});
+osmTiles.addTo(map);
+
+// Terrain / relief tiles (ESRI World Shaded Relief)
+const terrainTiles = L.tileLayer(
+  'https://server.arcgisonline.com/ArcGIS/rest/services/World_Shaded_Relief/MapServer/tile/{z}/{y}/{x}',
+  {
+    attribution: '&copy; Esri, USGS',
+    maxZoom: 16,
+    opacity: 0.45,
+  }
+);
+
+// ── Draw controls ─────────────────────────────────────────────────── //
+const drawnItems = new L.FeatureGroup();
+map.addLayer(drawnItems);
+
+const drawControl = new L.Control.Draw({
+  position: 'topleft',
+  draw: {
+    polygon: {
+      allowIntersection: false,
+      showArea: true,
+      shapeOptions: {
+        color: '#34d399',
+        weight: 2,
+        fillColor: '#34d399',
+        fillOpacity: 0.15,
+      },
+    },
+    marker: {
+      icon: L.divIcon({
+        className: '',
+        html: `<div style="
+          width:18px;height:18px;
+          background:linear-gradient(135deg,#3b82f6,#06b6d4);
+          border:2px solid #f1f5f9;
+          border-radius:50% 50% 50% 0;
+          transform:rotate(-45deg);
+          box-shadow:0 2px 8px rgba(59,130,246,0.5);
+        "></div>`,
+        iconSize: [18, 18],
+        iconAnchor: [9, 18],
+      }),
+    },
+    polyline: false,
+    circle: false,
+    circlemarker: false,
+    rectangle: false,
+  },
+  edit: {
+    featureGroup: drawnItems,
+    remove: true,
+  },
+});
+map.addControl(drawControl);
+
+// ── Draw event handlers ───────────────────────────────────────────── //
+map.on(L.Draw.Event.CREATED, (e) => {
+  const layer = e.layer;
+  drawnItems.addLayer(layer);
+
+  if (e.layerType === 'marker') {
+    AppState.assetMarker = layer;
+    const latlng = layer.getLatLng();
+    document.getElementById('map-coords').textContent =
+      `Asset: ${latlng.lat.toFixed(5)}, ${latlng.lng.toFixed(5)}`;
+    updateModeBadgeFromCoords(latlng.lat, latlng.lng);
+    updateMapInfo('Asset pin placed. Draw an intervention polygon or click Analyse.');
+  } else if (e.layerType === 'polygon') {
+    AppState.drawnLayers.push(layer);
+    const bounds = layer.getBounds();
+    const center = bounds.getCenter();
+    updateModeBadgeFromCoords(center.lat, center.lng);
+    updateMapInfo('Intervention polygon drawn. Click Analyse to run assessment.');
+    // Bind popup with area info
+    const area = L.GeometryUtil.geodesicArea(layer.getLatLngs()[0]);
+    const areaHa = (area / 10000).toFixed(2);
+    layer.bindPopup(
+      `<div style="color:#f1f5f9;font-size:12px;">
+        <strong style="color:#34d399;">Intervention Area</strong><br>
+        Area: ${areaHa} ha
+      </div>`,
+      { closeButton: true }
+    );
+  }
+});
+
+// ── Coordinate mode routing ───────────────────────────────────────── //
+function updateModeBadgeFromCoords(lat, lng) {
+  // Simplified UK coastal detection: rough bounding of coastal areas
+  // In production this would query EA Flood Zone 3 tidal boundaries
+  const nearCoast = isNearCoast(lat, lng);
+  const tidal = isTidalZone(lat, lng);
+
+  let mode = 'inland';
+  if (tidal) mode = 'mixed';
+  else if (nearCoast) mode = 'coastal';
+
+  AppState.analysisMode = mode;
+  const badge = document.getElementById('mode-badge');
+  badge.textContent = mode.charAt(0).toUpperCase() + mode.slice(1);
+  badge.className = `mode-badge ${mode}`;
+}
+
+function isNearCoast(lat, lng) {
+  // Heuristic approximation for UK coastal zones (within ~5km of coast)
+  // Key coastal regions of England & Wales
+  const coastalZones = [
+    { minLat: 49.9, maxLat: 51.5, minLng: -5.8, maxLng: -3.0 },  // SW England
+    { minLat: 50.5, maxLat: 51.5, minLng: -0.5, maxLng: 1.8 },   // SE England
+    { minLat: 51.2, maxLat: 53.5, minLng: 0.3, maxLng: 2.0 },    // East Anglia / East coast
+    { minLat: 53.0, maxLat: 55.5, minLng: -5.3, maxLng: -3.0 },  // NW England / N Wales
+    { minLat: 51.3, maxLat: 52.5, minLng: -5.4, maxLng: -3.0 },  // SW Wales
+    { minLat: 53.3, maxLat: 54.7, minLng: -0.5, maxLng: 0.5 },   // Humber / Lincolnshire
+  ];
+  return coastalZones.some(z =>
+    lat >= z.minLat && lat <= z.maxLat && lng >= z.minLng && lng <= z.maxLng
+  );
+}
+
+function isTidalZone(lat, lng) {
+  // Major estuaries / tidal zones
+  const tidal = [
+    { lat: 51.5, lng: 0.7, r: 0.3 },   // Thames Estuary
+    { lat: 51.48, lng: -2.72, r: 0.3 }, // Severn Estuary
+    { lat: 53.73, lng: -0.25, r: 0.25 },// Humber
+    { lat: 50.72, lng: -1.1, r: 0.2 },  // Solent
+  ];
+  return tidal.some(t =>
+    Math.abs(lat - t.lat) < t.r && Math.abs(lng - t.lng) < t.r
+  );
+}
+
+// ── Map cursor coords ─────────────────────────────────────────────── //
+map.on('mousemove', (e) => {
+  const { lat, lng } = e.latlng;
+  const coordEl = document.getElementById('map-coords');
+  if (!AppState.assetMarker) {
+    coordEl.textContent = `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+  }
+});
+
+function updateMapInfo(msg) {
+  const el = document.getElementById('map-info');
+  const existing = el.querySelector('div:first-child');
+  if (existing) existing.textContent = msg;
+}
+
+// ── Layer toggles ─────────────────────────────────────────────────── //
+// Mock EA Flood Zone polygons for the Severn catchment area
+const FLOOD_ZONE_DATA = {
+  zone3: [
+    [[52.44, -2.38], [52.46, -2.30], [52.40, -2.25], [52.37, -2.32], [52.40, -2.40]],
+    [[52.33, -2.31], [52.35, -2.26], [52.32, -2.22], [52.29, -2.28], [52.30, -2.33]],
+  ],
+  zone2: [
+    [[52.47, -2.42], [52.49, -2.28], [52.42, -2.20], [52.36, -2.28], [52.38, -2.44]],
+    [[52.34, -2.35], [52.36, -2.24], [52.30, -2.20], [52.27, -2.30], [52.28, -2.37]],
+  ],
+};
+
+let floodLayers = null;
+let riskOverlayLayers = null;
+
+function buildFloodLayers() {
+  if (floodLayers) return floodLayers;
+  const group = L.layerGroup();
+
+  FLOOD_ZONE_DATA.zone3.forEach(coords => {
+    L.polygon(coords, {
+      color: '#3b82f6',
+      weight: 1,
+      fillColor: '#3b82f6',
+      fillOpacity: 0.35,
+    }).bindPopup('<strong style="color:#f1f5f9">EA Flood Zone 3</strong><br><span style="color:#94a3b8;font-size:11px">High probability — annual flood chance >1%</span>')
+      .addTo(group);
+  });
+
+  FLOOD_ZONE_DATA.zone2.forEach(coords => {
+    L.polygon(coords, {
+      color: '#63b3ed',
+      weight: 1,
+      fillColor: '#63b3ed',
+      fillOpacity: 0.22,
+    }).bindPopup('<strong style="color:#f1f5f9">EA Flood Zone 2</strong><br><span style="color:#94a3b8;font-size:11px">Medium probability — 0.1%–1% annual flood chance</span>')
+      .addTo(group);
+  });
+
+  floodLayers = group;
+  return group;
+}
+
+function buildRiskOverlay() {
+  if (riskOverlayLayers) return riskOverlayLayers;
+  const group = L.layerGroup();
+  // Risk-reduction overlay — shown post-analysis as mock opportunity zones
+  const zones = [
+    { coords: [[52.48, -2.50], [52.52, -2.40], [52.50, -2.32], [52.46, -2.38], [52.45, -2.48]], color: '#34d399', label: 'High Impact — Upper Severn Peatland' },
+    { coords: [[52.55, -2.45], [52.58, -2.35], [52.55, -2.28], [52.52, -2.35]], color: '#3b82f6', label: 'Medium Impact — Ironbridge Riparian Woodland' },
+    { coords: [[52.36, -2.44], [52.39, -2.38], [52.37, -2.32], [52.34, -2.36]], color: '#06b6d4', label: 'Moderate Impact — Bewdley Leaky Dam Network' },
+  ];
+
+  zones.forEach(z => {
+    L.polygon(z.coords, {
+      color: z.color,
+      weight: 2,
+      fillColor: z.color,
+      fillOpacity: 0.2,
+      dashArray: '6 4',
+    }).bindPopup(`<strong style="color:${z.color}">${z.label}</strong>`)
+      .addTo(group);
+  });
+
+  riskOverlayLayers = group;
+  return group;
+}
+
+function toggleFloodLayer() {
+  const btn = document.getElementById('btn-flood-layer');
+  const legend = document.getElementById('overlay-legend');
+  AppState.floodLayerActive = !AppState.floodLayerActive;
+  btn.setAttribute('aria-pressed', AppState.floodLayerActive);
+
+  if (AppState.floodLayerActive) {
+    buildFloodLayers().addTo(map);
+    btn.classList.add('active');
+    legend.classList.add('visible');
+  } else {
+    if (floodLayers) map.removeLayer(floodLayers);
+    btn.classList.remove('active');
+    legend.classList.remove('visible');
+  }
+}
+
+function toggleTerrainLayer() {
+  const btn = document.getElementById('btn-terrain-layer');
+  AppState.terrainLayerActive = !AppState.terrainLayerActive;
+  btn.setAttribute('aria-pressed', AppState.terrainLayerActive);
+
+  if (AppState.terrainLayerActive) {
+    terrainTiles.addTo(map);
+    btn.classList.add('active');
+  } else {
+    map.removeLayer(terrainTiles);
+    btn.classList.remove('active');
+  }
+}
+
+function toggleRiskOverlay() {
+  const btn = document.getElementById('btn-risk-overlay');
+  AppState.riskOverlayActive = !AppState.riskOverlayActive;
+  btn.setAttribute('aria-pressed', AppState.riskOverlayActive);
+
+  if (AppState.riskOverlayActive) {
+    buildRiskOverlay().addTo(map);
+    btn.classList.add('active');
+  } else {
+    if (riskOverlayLayers) map.removeLayer(riskOverlayLayers);
+    btn.classList.remove('active');
+  }
+}
+
+// ── Mode toggle buttons ───────────────────────────────────────────── //
+document.getElementById('btn-asset-manager').addEventListener('click', () => {
+  AppState.userMode = 'asset-manager';
+  document.getElementById('btn-asset-manager').classList.add('active', 'asset');
+  document.getElementById('btn-asset-manager').setAttribute('aria-checked', 'true');
+  document.getElementById('btn-project-developer').classList.remove('active', 'developer');
+  document.getElementById('btn-project-developer').setAttribute('aria-checked', 'false');
+  document.getElementById('chat-input').placeholder =
+    'e.g. What upstream restoration would best protect this asset from flood risk?';
+  updateMapInfo('Place an asset pin on the map, then click Analyse.');
+});
+
+document.getElementById('btn-project-developer').addEventListener('click', () => {
+  AppState.userMode = 'project-developer';
+  document.getElementById('btn-project-developer').classList.add('active', 'developer');
+  document.getElementById('btn-project-developer').setAttribute('aria-checked', 'true');
+  document.getElementById('btn-asset-manager').classList.remove('active', 'asset');
+  document.getElementById('btn-asset-manager').setAttribute('aria-checked', 'false');
+  document.getElementById('chat-input').placeholder =
+    'e.g. What assets downstream would benefit from this wetland, and by how much?';
+  updateMapInfo('Draw an intervention polygon on the map, then click Analyse.');
+});
+
+// ── Stream toggle ─────────────────────────────────────────────────── //
+function toggleStream() {
+  AppState.streamCollapsed = !AppState.streamCollapsed;
+  const steps = document.getElementById('stream-steps');
+  const chevron = document.getElementById('stream-chevron');
+  const toggle = document.getElementById('stream-toggle');
+  steps.classList.toggle('collapsed', AppState.streamCollapsed);
+  chevron.classList.toggle('open', !AppState.streamCollapsed);
+  toggle.setAttribute('aria-expanded', !AppState.streamCollapsed);
+}
+
+// ── Analysis Flow ─────────────────────────────────────────────────── //
+async function runAnalysis() {
+  if (AppState.analysing) return;
+  AppState.analysing = true;
+
+  const btn = document.getElementById('analyse-btn');
+  btn.classList.add('loading');
+  btn.disabled = true;
+
+  const userQuery = document.getElementById('chat-input').value.trim() ||
+    (AppState.userMode === 'asset-manager'
+      ? 'What upstream restoration would best protect this asset from flood risk?'
+      : 'What assets downstream would benefit from this intervention, and by how much?');
+
+  // Expand action stream
+  if (AppState.streamCollapsed) toggleStream();
+
+  // Run step animation
+  const steps = AppState.analysisMode === 'coastal' ? STEPS_COASTAL : STEPS_INLAND;
+  await animateSteps(steps);
+
+  // Call API or use mock
+  let results;
+  try {
+    if (!isDemoMode && window.NatureRiskAdvisor && typeof window.NatureRiskAdvisor.analyse === 'function') {
+      const params = {
+        mode: AppState.analysisMode,
+        userMode: AppState.userMode,
+        query: userQuery,
+        geometry: getGeometryForAPI(),
+      };
+      results = await window.NatureRiskAdvisor.analyse(params);
+    } else {
+      // Fallback to mock
+      results = AppState.analysisMode === 'coastal' ? MOCK_COASTAL : MOCK_INLAND;
+      await sleep(300); // slight delay for realism
+    }
+  } catch (err) {
+    console.error('Analysis error:', err);
+    results = AppState.analysisMode === 'coastal' ? MOCK_COASTAL : MOCK_INLAND;
+  }
+
+  AppState.lastResults = results;
+  AppState.hasResults = true;
+
+  // Render results
+  renderResults(results);
+
+  // Show stream summary
+  const summaryEl = document.getElementById('stream-summary');
+  const stepCount = steps.length;
+  summaryEl.textContent = `${stepCount} steps complete — analysis ready`;
+  summaryEl.classList.add('visible');
+
+  // Enable export
+  document.getElementById('export-btn').disabled = false;
+
+  // Add risk overlay automatically post-analysis
+  if (!AppState.riskOverlayActive && AppState.analysisMode === 'inland') {
+    toggleRiskOverlay();
+  }
+
+  AppState.analysing = false;
+  btn.classList.remove('loading');
+  btn.disabled = false;
+}
+
+function getGeometryForAPI() {
+  const geom = { polygons: [], markers: [] };
+  drawnItems.eachLayer((layer) => {
+    if (layer instanceof L.Polygon) {
+      geom.polygons.push(layer.getLatLngs());
+    } else if (layer instanceof L.Marker) {
+      const ll = layer.getLatLng();
+      geom.markers.push({ lat: ll.lat, lng: ll.lng });
+    }
+  });
+  return geom;
+}
+
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function animateSteps(steps) {
+  const container = document.getElementById('stream-steps');
+  const spinner = document.getElementById('stream-spinner');
+
+  // Clear previous steps
+  container.innerHTML = '';
+  document.getElementById('stream-summary').classList.remove('visible');
+  spinner.classList.add('active');
+
+  const stepEls = steps.map((text, i) => {
+    const el = document.createElement('div');
+    el.className = 'stream-step';
+    el.setAttribute('role', 'listitem');
+    el.innerHTML = `
+      <div class="step-icon pending" id="step-icon-${i}" aria-hidden="true"></div>
+      <span>${text}</span>
+    `;
+    container.appendChild(el);
+    return el;
+  });
+
+  // Stagger reveal
+  for (let i = 0; i < stepEls.length; i++) {
+    await sleep(80);
+    stepEls[i].classList.add('visible');
+  }
+
+  // Animate running state
+  for (let i = 0; i < stepEls.length; i++) {
+    stepEls[i].classList.add('running');
+    const icon = document.getElementById(`step-icon-${i}`);
+    icon.className = 'step-icon running';
+
+    const delay = 180 + Math.random() * 280;
+    await sleep(delay);
+
+    icon.className = 'step-icon done';
+    icon.textContent = '✓';
+    stepEls[i].classList.remove('running');
+    stepEls[i].classList.add('done');
+  }
+
+  spinner.classList.remove('active');
+}
+
+// ── Render Results ────────────────────────────────────────────────── //
+function renderResults(data) {
+  const area = document.getElementById('results-area');
+  area.innerHTML = '';
+
+  if (data.mode === 'coastal') {
+    renderCoastalResults(area, data);
+  } else {
+    renderInlandResults(area, data);
+  }
+
+  // Always append disclaimer
+  const disc = document.createElement('div');
+  disc.className = 'disclaimer fade-in';
+  disc.setAttribute('role', 'note');
+  disc.innerHTML = `<strong>Disclaimer:</strong> These results are proxy models for directional pre-feasibility assessment only. They are not a substitute for a certified Flood Risk Assessment (FRA), structural engineering survey, regulated environmental impact assessment, or any other statutory process. Do not rely on these outputs for planning decisions, insurance, or regulatory submissions without independent professional verification.`;
+  area.appendChild(disc);
+}
+
+function renderInlandResults(area, data) {
+  // Risk Delta Card
+  const deltaCard = document.createElement('div');
+  deltaCard.className = 'card fade-in';
+  deltaCard.setAttribute('aria-label', 'Risk delta results');
+  deltaCard.innerHTML = `
+    <div class="card-label"><div class="dot"></div> Risk Delta</div>
+    <div class="risk-delta">
+      <div class="risk-metric">
+        <div class="risk-metric-value">${data.peakFlowReduction}<small style="font-size:0.9rem">%</small></div>
+        <div class="risk-metric-label">Peak Flow Reduction</div>
+        <div class="risk-metric-sub">±${data.uncertainty}% uncertainty</div>
+      </div>
+      <div class="risk-metric">
+        <div class="risk-metric-value blue">${data.floodHeightReduction}<small style="font-size:0.9rem">m</small></div>
+        <div class="risk-metric-label">Flood Height Reduction</div>
+        <div class="risk-metric-sub">at asset location</div>
+      </div>
+      <div class="risk-metric">
+        <div class="risk-metric-value teal">${data.delayHours}<small style="font-size:0.8rem">hrs</small></div>
+        <div class="risk-metric-label">Peak Delay</div>
+        <div class="risk-metric-sub">flood peak arrival</div>
+      </div>
+      <div class="risk-metric">
+        <div class="risk-metric-value amber">${data.confidence}</div>
+        <div class="risk-metric-label">Confidence Level</div>
+        <div class="risk-metric-sub">data quality score</div>
+      </div>
+    </div>
+  `;
+  area.appendChild(deltaCard);
+
+  // Hydrograph
+  const hydroCard = document.createElement('div');
+  hydroCard.className = 'card fade-in';
+  hydroCard.setAttribute('aria-label', 'Hydrograph — before and after intervention');
+  hydroCard.innerHTML = `
+    <div class="card-label"><div class="dot blue"></div> Hydrograph — 1-in-100 Year Event</div>
+    <div class="hydrograph-container">
+      <canvas class="hydrograph-canvas" id="hydro-canvas" aria-label="Flood hydrograph before and after intervention"></canvas>
+      <div class="hydrograph-legend">
+        <div class="legend-item"><div class="legend-dot" style="background:#ef4444"></div> Before</div>
+        <div class="legend-item"><div class="legend-dot" style="background:#34d399"></div> After</div>
+      </div>
+    </div>
+  `;
+  area.appendChild(hydroCard);
+
+  // Draw hydrograph after DOM insertion
+  setTimeout(() => drawHydrograph('hydro-canvas', data.peakFlowReduction), 50);
+
+  // Confidence row
+  const confCard = document.createElement('div');
+  confCard.className = 'card fade-in';
+  confCard.setAttribute('aria-label', 'Confidence and uncertainty');
+  confCard.innerHTML = `
+    <div class="card-label"><div class="dot amber"></div> Confidence & Uncertainty</div>
+    <div class="confidence-row">
+      <span class="confidence-badge ${data.confidence.toLowerCase()}" role="status" aria-label="Confidence: ${data.confidence}">
+        <div class="confidence-dot"></div>
+        ${data.confidence} Confidence
+      </span>
+      <span class="uncertainty-range" aria-label="Uncertainty range: ±${data.uncertainty}%">
+        Peak flow: ${data.peakFlowReduction}% ±${data.uncertainty}%
+      </span>
+    </div>
+    <div style="margin-top:8px;">
+      <div class="data-sources" aria-label="Data sources used">
+        ${data.dataSources.map(s => `<span class="ds-tag">${s}</span>`).join('')}
+      </div>
+    </div>
+    <div style="font-size:0.7rem;color:var(--text-muted);margin-top:8px;line-height:1.5;">
+      Modelled using EA LIDAR 1m composite, BGS Soilscapes permeability data, UKCEH Land Cover Map (25m), Met Office UKCP18 RCP4.5 &amp; RCP8.5 rainfall projections. Data recency: 12–24 months.
+    </div>
+  `;
+  area.appendChild(confCard);
+
+  // Opportunity Zones
+  const zonesCard = document.createElement('div');
+  zonesCard.className = 'card fade-in';
+  zonesCard.setAttribute('aria-label', 'Opportunity zones for natural capital intervention');
+  const zoneRankClass = ['', 'rank-2', 'rank-3'];
+  zonesCard.innerHTML = `
+    <div class="card-label"><div class="dot"></div> Opportunity Zones</div>
+    <div class="zone-list" role="list">
+      ${data.opportunityZones.map((z, i) => `
+        <div class="zone-card ${zoneRankClass[i]}" role="listitem" tabindex="0"
+             aria-label="${z.name}: ${z.type}, ${z.area} ha, ${z.reduction}% flow reduction"
+             onclick="highlightZone(${i})" onkeypress="if(event.key==='Enter')highlightZone(${i})">
+          <div class="zone-name">${z.name}</div>
+          <div class="zone-meta">
+            <span class="zone-tag">${z.type}</span>
+            <span class="zone-tag">${z.area} ha</span>
+            <span class="zone-impact">−${z.reduction}% Q-peak</span>
+          </div>
+        </div>
+      `).join('')}
+    </div>
+  `;
+  area.appendChild(zonesCard);
+
+  // Narrative
+  if (data.narrative) {
+    const narCard = document.createElement('div');
+    narCard.className = 'card fade-in';
+    narCard.setAttribute('aria-label', 'Advisory narrative');
+    narCard.innerHTML = `
+      <div class="card-label"><div class="dot blue"></div> Advisory Synthesis</div>
+      <p style="font-size:0.8rem;color:var(--text-secondary);line-height:1.6;">${data.narrative}</p>
+      ${isDemoMode ? '<p style="font-size:0.7rem;color:var(--text-muted);margin-top:6px;">Demo mode: narrative generated from mock data. Connect Claude API for AI-generated synthesis.</p>' : ''}
+    `;
+    area.appendChild(narCard);
+  }
+}
+
+function renderCoastalResults(area, data) {
+  // Risk Delta Card
+  const deltaCard = document.createElement('div');
+  deltaCard.className = 'card fade-in';
+  deltaCard.setAttribute('aria-label', 'Coastal risk delta results');
+  deltaCard.innerHTML = `
+    <div class="card-label"><div class="dot" style="background:var(--teal)"></div> Coastal Risk Delta</div>
+    <div class="risk-delta">
+      <div class="risk-metric">
+        <div class="risk-metric-value teal">${data.waveEnergyReduction}<small style="font-size:0.9rem">%</small></div>
+        <div class="risk-metric-label">Wave Energy Reduction</div>
+        <div class="risk-metric-sub">±${data.uncertainty}% uncertainty</div>
+      </div>
+      <div class="risk-metric">
+        <div class="risk-metric-value blue">${data.stormSurgeReduction}<small style="font-size:0.9rem">m</small></div>
+        <div class="risk-metric-label">Storm Surge Reduction</div>
+        <div class="risk-metric-sub">1-in-100yr event</div>
+      </div>
+      <div class="risk-metric">
+        <div class="risk-metric-value">${data.erosionDelta}<small style="font-size:0.9rem">m</small></div>
+        <div class="risk-metric-label">Erosion Avoided</div>
+        <div class="risk-metric-sub">25-year horizon</div>
+      </div>
+      <div class="risk-metric">
+        <div class="risk-metric-value amber">${data.confidence}</div>
+        <div class="risk-metric-label">Confidence Level</div>
+        <div class="risk-metric-sub">data quality score</div>
+      </div>
+    </div>
+  `;
+  area.appendChild(deltaCard);
+
+  // Habitat options
+  const habCard = document.createElement('div');
+  habCard.className = 'card fade-in';
+  habCard.setAttribute('aria-label', 'Habitat restoration options');
+  habCard.innerHTML = `
+    <div class="card-label"><div class="dot" style="background:var(--teal)"></div> Habitat Restoration Options</div>
+    <div class="asset-list" role="list">
+      ${data.habitats.map(h => `
+        <div class="asset-item" role="listitem" aria-label="${h.name}: ${h.area} ha, attenuation ${h.attenuation}, maturation ${h.maturation}">
+          <div class="asset-dot" style="background:var(--teal)"></div>
+          <div>
+            <div class="asset-name">${h.name}</div>
+            <div style="font-size:0.7rem;color:var(--text-muted)">${h.area} ha &bull; Maturation: ${h.maturation}</div>
+          </div>
+          <div class="asset-stat">${h.attenuation}</div>
+        </div>
+      `).join('')}
+    </div>
+    <div style="font-size:0.7rem;color:var(--text-muted);margin-top:10px;line-height:1.5;border-top:1px solid var(--border-subtle);padding-top:8px;">
+      <strong>Dynamic Morphology Disclosure:</strong> Habitat efficacy is subject to storm disturbance; baseline attenuation carries ±20% inter-annual variability. UKCP18 RCP4.5/8.5 sea-level rise projections incorporated. Static baselines are never assumed.
+    </div>
+  `;
+  area.appendChild(habCard);
+
+  // Confidence
+  const confCard = document.createElement('div');
+  confCard.className = 'card fade-in';
+  confCard.setAttribute('aria-label', 'Confidence and data sources');
+  confCard.innerHTML = `
+    <div class="card-label"><div class="dot amber"></div> Confidence &amp; Data Sources</div>
+    <div class="confidence-row">
+      <span class="confidence-badge ${data.confidence.toLowerCase()}" role="status">
+        <div class="confidence-dot"></div>
+        ${data.confidence} Confidence
+      </span>
+      <span class="uncertainty-range">Wave E.: ${data.waveEnergyReduction}% ±${data.uncertainty}%</span>
+    </div>
+    <div style="margin-top:8px;">
+      <div class="data-sources">
+        ${data.dataSources.map(s => `<span class="ds-tag">${s}</span>`).join('')}
+      </div>
+    </div>
+  `;
+  area.appendChild(confCard);
+
+  // Narrative
+  if (data.narrative) {
+    const narCard = document.createElement('div');
+    narCard.className = 'card fade-in';
+    narCard.setAttribute('aria-label', 'Advisory narrative');
+    narCard.innerHTML = `
+      <div class="card-label"><div class="dot blue"></div> Advisory Synthesis</div>
+      <p style="font-size:0.8rem;color:var(--text-secondary);line-height:1.6;">${data.narrative}</p>
+    `;
+    area.appendChild(narCard);
+  }
+}
+
+// ── Hydrograph Canvas ─────────────────────────────────────────────── //
+function drawHydrograph(canvasId, reductionPct) {
+  const canvas = document.getElementById(canvasId);
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  const W = canvas.offsetWidth;
+  const H = canvas.offsetHeight;
+  canvas.width = W;
+  canvas.height = H;
+
+  const pad = { t: 10, b: 16, l: 8, r: 8 };
+  const w = W - pad.l - pad.r;
+  const h = H - pad.t - pad.b;
+
+  // Generate hydrograph curves (simplified triangular + recession limb)
+  function hydroPoints(peakFrac, skewFrac, n = 60) {
+    const pts = [];
+    for (let i = 0; i <= n; i++) {
+      const t = i / n;
+      let q;
+      if (t < skewFrac) {
+        q = peakFrac * (t / skewFrac);
+      } else {
+        q = peakFrac * Math.exp(-4.5 * (t - skewFrac));
+      }
+      pts.push({ x: t, y: q });
+    }
+    return pts;
+  }
+
+  const beforePeak = 0.85;
+  const afterPeak = beforePeak * (1 - reductionPct / 100);
+  const beforePts = hydroPoints(beforePeak, 0.3);
+  const afterPts = hydroPoints(afterPeak * 0.95, 0.38);
+
+  function toCanvas(pt) {
+    return {
+      x: pad.l + pt.x * w,
+      y: pad.t + h - pt.y * h,
+    };
+  }
+
+  // Background grid
+  ctx.strokeStyle = 'rgba(255,255,255,0.04)';
+  ctx.lineWidth = 1;
+  for (let i = 1; i < 4; i++) {
+    const y = pad.t + (h / 4) * i;
+    ctx.beginPath();
+    ctx.moveTo(pad.l, y);
+    ctx.lineTo(pad.l + w, y);
+    ctx.stroke();
+  }
+
+  // Before curve (red)
+  ctx.beginPath();
+  ctx.strokeStyle = '#ef4444';
+  ctx.lineWidth = 1.5;
+  ctx.setLineDash([]);
+  beforePts.forEach((pt, i) => {
+    const cp = toCanvas(pt);
+    i === 0 ? ctx.moveTo(cp.x, cp.y) : ctx.lineTo(cp.x, cp.y);
+  });
+  ctx.stroke();
+
+  // Fill before
+  ctx.beginPath();
+  beforePts.forEach((pt, i) => {
+    const cp = toCanvas(pt);
+    i === 0 ? ctx.moveTo(cp.x, cp.y) : ctx.lineTo(cp.x, cp.y);
+  });
+  ctx.lineTo(pad.l + w, pad.t + h);
+  ctx.lineTo(pad.l, pad.t + h);
+  ctx.closePath();
+  ctx.fillStyle = 'rgba(239,68,68,0.07)';
+  ctx.fill();
+
+  // After curve (green)
+  ctx.beginPath();
+  ctx.strokeStyle = '#34d399';
+  ctx.lineWidth = 2;
+  afterPts.forEach((pt, i) => {
+    const cp = toCanvas(pt);
+    i === 0 ? ctx.moveTo(cp.x, cp.y) : ctx.lineTo(cp.x, cp.y);
+  });
+  ctx.stroke();
+
+  // Fill after
+  ctx.beginPath();
+  afterPts.forEach((pt, i) => {
+    const cp = toCanvas(pt);
+    i === 0 ? ctx.moveTo(cp.x, cp.y) : ctx.lineTo(cp.x, cp.y);
+  });
+  ctx.lineTo(pad.l + w, pad.t + h);
+  ctx.lineTo(pad.l, pad.t + h);
+  ctx.closePath();
+  ctx.fillStyle = 'rgba(52,211,153,0.09)';
+  ctx.fill();
+
+  // X-axis label
+  ctx.fillStyle = 'rgba(148,163,184,0.5)';
+  ctx.font = '9px monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText('Time', pad.l + w / 2, H - 2);
+}
+
+// ── Highlight Zone on Map ─────────────────────────────────────────── //
+function highlightZone(index) {
+  if (!AppState.riskOverlayActive) {
+    toggleRiskOverlay();
+  }
+  // Fly to relevant zone area
+  const centers = [
+    [52.49, -2.41],
+    [52.555, -2.37],
+    [52.375, -2.38],
+  ];
+  if (centers[index]) {
+    map.flyTo(centers[index], 12, { duration: 1.2 });
+  }
+}
+
+// ── PDF Export ────────────────────────────────────────────────────── //
+async function exportPDF() {
+  if (!AppState.hasResults || !AppState.lastResults) return;
+
+  const btn = document.getElementById('export-btn');
+  btn.textContent = 'Generating...';
+  btn.disabled = true;
+
+  await sleep(200); // let browser paint
+
+  try {
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+
+    const pageW = 210;
+    const pageH = 297;
+    const margin = 20;
+    const contentW = pageW - margin * 2;
+    let y = margin;
+
+    // ── Header bar
+    doc.setFillColor(10, 22, 40);
+    doc.rect(0, 0, pageW, 40, 'F');
+
+    doc.setTextColor(52, 211, 153);
+    doc.setFontSize(20);
+    doc.setFont('helvetica', 'bold');
+    doc.text('Nature Risk', margin, 18);
+
+    doc.setTextColor(241, 245, 249);
+    doc.setFontSize(11);
+    doc.setFont('helvetica', 'normal');
+    doc.text('Pre-Feasibility Assessment', margin, 27);
+
+    doc.setFontSize(8);
+    doc.setTextColor(148, 163, 184);
+    const now = new Date();
+    doc.text(`Generated: ${now.toLocaleDateString('en-GB', { day:'numeric',month:'long',year:'numeric' })} at ${now.toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'})}`, pageW - margin, 27, { align: 'right' });
+
+    y = 50;
+
+    // ── Title
+    doc.setTextColor(15, 32, 53);
+    doc.setFontSize(16);
+    doc.setFont('helvetica', 'bold');
+    doc.text('Nature Risk — Pre-Feasibility Assessment', margin, y);
+    y += 8;
+
+    // ── Mode badge
+    const modeText = `Mode: ${AppState.analysisMode.charAt(0).toUpperCase() + AppState.analysisMode.slice(1)} | User Role: ${AppState.userMode === 'asset-manager' ? 'Asset Manager' : 'Project Developer'}`;
+    doc.setFontSize(9);
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(59, 130, 246);
+    doc.text(modeText, margin, y);
+    y += 10;
+
+    // ── Separator
+    doc.setDrawColor(200, 210, 220);
+    doc.setLineWidth(0.3);
+    doc.line(margin, y, pageW - margin, y);
+    y += 8;
+
+    const data = AppState.lastResults;
+
+    if (data.mode === 'inland') {
+      // ── Results Table
+      doc.setFontSize(12);
+      doc.setFont('helvetica', 'bold');
+      doc.setTextColor(15, 32, 53);
+      doc.text('Quantitative Results', margin, y);
+      y += 6;
+
+      const tableData = [
+        ['Peak Flow Reduction', `${data.peakFlowReduction}% ±${data.uncertainty}%`],
+        ['Flood Height Reduction at Asset', `${data.floodHeightReduction} m`],
+        ['Flood Peak Delay', `${data.delayHours} hours`],
+        ['Confidence Level', data.confidence],
+      ];
+
+      doc.setFontSize(9);
+      tableData.forEach(([label, value], i) => {
+        const rowY = y + i * 8;
+        if (i % 2 === 0) {
+          doc.setFillColor(245, 248, 252);
+          doc.rect(margin, rowY - 4, contentW, 8, 'F');
+        }
+        doc.setTextColor(50, 60, 80);
+        doc.setFont('helvetica', 'normal');
+        doc.text(label, margin + 3, rowY);
+        doc.setFont('helvetica', 'bold');
+        doc.setTextColor(15, 32, 53);
+        doc.text(value, pageW - margin - 3, rowY, { align: 'right' });
+      });
+      y += tableData.length * 8 + 10;
+
+      // ── Opportunity Zones
+      doc.setFontSize(12);
+      doc.setFont('helvetica', 'bold');
+      doc.setTextColor(15, 32, 53);
+      doc.text('Opportunity Zones', margin, y);
+      y += 6;
+
+      doc.setFontSize(9);
+      data.opportunityZones.forEach((zone, i) => {
+        doc.setFillColor(i === 0 ? 235 : i === 1 ? 240 : 245, 250, i === 0 ? 245 : 248, 252);
+        doc.rect(margin, y - 4, contentW, 8, 'F');
+        doc.setTextColor(50, 60, 80);
+        doc.setFont('helvetica', 'bold');
+        doc.text(`${i+1}. ${zone.name}`, margin + 3, y);
+        doc.setFont('helvetica', 'normal');
+        doc.setTextColor(100, 120, 140);
+        doc.text(`${zone.type} | ${zone.area} ha | −${zone.reduction}% Q-peak`, pageW - margin - 3, y, { align: 'right' });
+        y += 9;
+      });
+      y += 5;
+
+    } else {
+      // Coastal results
+      doc.setFontSize(12);
+      doc.setFont('helvetica', 'bold');
+      doc.setTextColor(15, 32, 53);
+      doc.text('Coastal Risk Reduction Results', margin, y);
+      y += 6;
+
+      const tableData = [
+        ['Wave Energy Reduction', `${data.waveEnergyReduction}% ±${data.uncertainty}%`],
+        ['Storm Surge Height Reduction', `${data.stormSurgeReduction} m`],
+        ['Shoreline Erosion Avoided (25yr)', `${data.erosionDelta} m`],
+        ['Confidence Level', data.confidence],
+      ];
+
+      doc.setFontSize(9);
+      tableData.forEach(([label, value], i) => {
+        const rowY = y + i * 8;
+        if (i % 2 === 0) {
+          doc.setFillColor(245, 248, 252);
+          doc.rect(margin, rowY - 4, contentW, 8, 'F');
+        }
+        doc.setTextColor(50, 60, 80);
+        doc.setFont('helvetica', 'normal');
+        doc.text(label, margin + 3, rowY);
+        doc.setFont('helvetica', 'bold');
+        doc.setTextColor(15, 32, 53);
+        doc.text(value, pageW - margin - 3, rowY, { align: 'right' });
+      });
+      y += tableData.length * 8 + 10;
+    }
+
+    // ── Data Sources
+    doc.setFontSize(12);
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(15, 32, 53);
+    doc.text('Data Sources', margin, y);
+    y += 6;
+
+    doc.setFontSize(8.5);
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(80, 95, 115);
+    data.dataSources.forEach((src, i) => {
+      doc.text(`• ${src}`, margin + 3, y + i * 6);
+    });
+    y += data.dataSources.length * 6 + 10;
+
+    // ── Confidence note
+    doc.setFontSize(9);
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(15, 32, 53);
+    doc.text('Confidence Assessment', margin, y);
+    y += 5;
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(80, 95, 115);
+    const confNote = `Confidence Level: ${data.confidence}. ${
+      data.confidence === 'High'
+        ? 'All primary data sources returned valid responses. Data resolution ≤ 2m. Data recency ≤ 12 months.'
+        : data.confidence === 'Medium'
+        ? 'One or more secondary data sources unavailable. Data resolution 2–10m or data recency 12–36 months.'
+        : 'Multiple APIs unavailable. Reliance on coarse national datasets or data recency > 36 months.'
+    }`;
+    const confLines = doc.splitTextToSize(confNote, contentW);
+    doc.text(confLines, margin, y);
+    y += confLines.length * 5 + 8;
+
+    // ── Advisory narrative if present
+    if (data.narrative) {
+      doc.setFontSize(12);
+      doc.setFont('helvetica', 'bold');
+      doc.setTextColor(15, 32, 53);
+      doc.text('Advisory Synthesis', margin, y);
+      y += 5;
+      doc.setFontSize(9);
+      doc.setFont('helvetica', 'normal');
+      doc.setTextColor(60, 75, 95);
+      const narLines = doc.splitTextToSize(data.narrative, contentW);
+      doc.text(narLines, margin, y);
+      y += narLines.length * 5 + 8;
+    }
+
+    // ── Disclaimer (always on same page if room, else new page)
+    const discText = 'DISCLAIMER: These results are proxy models for directional pre-feasibility assessment only. They are not a substitute for a certified Flood Risk Assessment (FRA), structural engineering survey, regulated environmental impact assessment, or any other statutory process. Do not rely on these outputs for planning decisions, insurance, or regulatory submissions without independent professional verification. This is a directional pre-feasibility model. Not a certified Flood Risk Assessment.';
+
+    if (y > pageH - 60) {
+      doc.addPage();
+      y = margin;
+    }
+
+    doc.setFillColor(254, 249, 235);
+    const discLines = doc.splitTextToSize(discText, contentW - 10);
+    const discH = discLines.length * 5 + 10;
+    doc.rect(margin, y, contentW, discH, 'F');
+    doc.setDrawColor(245, 158, 11);
+    doc.setLineWidth(0.5);
+    doc.rect(margin, y, contentW, discH);
+
+    doc.setFontSize(8);
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(120, 80, 0);
+    doc.text('DISCLAIMER', margin + 5, y + 6);
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(100, 70, 0);
+    doc.text(discLines, margin + 5, y + 12);
+    y += discH + 8;
+
+    // ── Footer on each page
+    const totalPages = doc.getNumberOfPages();
+    for (let p = 1; p <= totalPages; p++) {
+      doc.setPage(p);
+      doc.setFillColor(10, 22, 40);
+      doc.rect(0, pageH - 12, pageW, 12, 'F');
+      doc.setFontSize(7);
+      doc.setTextColor(148, 163, 184);
+      doc.setFont('helvetica', 'normal');
+      doc.text('Nature Risk — naturerisk.io', margin, pageH - 4.5);
+      doc.text(`Page ${p} of ${totalPages}`, pageW - margin, pageH - 4.5, { align: 'right' });
+      doc.text('Directional pre-feasibility only — not a certified assessment', pageW / 2, pageH - 4.5, { align: 'center' });
+    }
+
+    const filename = `NatureRisk-Assessment-${now.toISOString().slice(0,10)}.pdf`;
+    doc.save(filename);
+
+  } catch (err) {
+    console.error('PDF export error:', err);
+    alert('PDF export failed. Please check browser console for details.');
+  } finally {
+    btn.innerHTML = `
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <path d="M12 16l-4-4h3V4h2v8h3l-4 4z" fill="currentColor"/>
+        <path d="M4 18h16v2H4v-2z" fill="currentColor"/>
+      </svg>
+      Export Board PDF`;
+    btn.disabled = false;
+  }
+}
+
+// ── Keyboard: Enter in chat textarea ──────────────────────────────── //
+document.getElementById('chat-input').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    if (!AppState.analysing) runAnalysis();
+  }
+});
+
+// ── Responsive map resize ─────────────────────────────────────────── //
+const resizeObserver = new ResizeObserver(() => {
+  map.invalidateSize();
+});
+resizeObserver.observe(document.getElementById('map-pane'));
+
+// ── Initial state: show idle steps placeholder ─────────────────────── //
+(function initStreamPlaceholder() {
+  const container = document.getElementById('stream-steps');
+  container.innerHTML = `
+    <div style="padding:8px 0 4px;font-size:0.77rem;color:var(--text-muted);">
+      Ready — place a marker or draw a polygon on the map, then click Analyse.
+    </div>
+  `;
+})();
+
+// ── Announce page load to screen readers ──────────────────────────── //
+(function announceReady() {
+  const liveRegion = document.createElement('div');
+  liveRegion.setAttribute('aria-live', 'polite');
+  liveRegion.setAttribute('aria-atomic', 'true');
+  liveRegion.className = 'sr-only';
+  liveRegion.style.cssText = 'position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0);';
+  document.body.appendChild(liveRegion);
+  setTimeout(() => {
+    liveRegion.textContent = 'Nature Risk analysis co-pilot loaded. Use the map on the right to place an asset pin or draw an intervention polygon, then click Analyse.';
+  }, 500);
+})();
+</script>
+</body>
+</html>
