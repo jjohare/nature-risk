@@ -268,11 +268,14 @@ export default {
       }
     }
 
-    // Inject API key as header if configured
-    if (route.keyInjection === 'header' && route.keyHeader && route.keyEnvField) {
-      const key = env[route.keyEnvField];
-      if (key && typeof key === 'string') {
-        upstreamHeaders.set(route.keyHeader, key);
+    // Inject API key: client-supplied key takes priority over server secret,
+    // so users can authenticate with their own Anthropic key.
+    if (route.keyInjection === 'header' && route.keyHeader) {
+      const clientKey = route.keyHeader ? request.headers.get(route.keyHeader) : null;
+      const serverKey = route.keyEnvField ? env[route.keyEnvField] : undefined;
+      const resolvedKey = clientKey || (typeof serverKey === 'string' ? serverKey : null);
+      if (resolvedKey) {
+        upstreamHeaders.set(route.keyHeader, resolvedKey);
       }
     }
 
