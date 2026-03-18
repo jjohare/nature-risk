@@ -71,7 +71,7 @@ jobs:
         run: npm run build
         env:
           VITE_MAPTILER_KEY: ${{ secrets.VITE_MAPTILER_KEY }}
-          VITE_PROXY_URL: ${{ secrets.VITE_PROXY_URL }}
+          VITE_PROXY_URL: https://nature-risk-proxy.solitary-paper-764d.workers.dev
 
       - name: Assemble deploy directory
         run: |
