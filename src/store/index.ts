@@ -233,7 +233,7 @@ export const useNatureRiskStore = create<NatureRiskStore>()(
         const state = get();
         const { assetPin, interventionPolygon } = state;
 
-        if (!assetPin || !interventionPolygon) {
+        if (!assetPin) {
           set((s) => {
             s.currentStep = 'error';
             s.actionStream.push({
@@ -242,13 +242,36 @@ export const useNatureRiskStore = create<NatureRiskStore>()(
               status: 'error',
               startedAt: new Date().toISOString(),
               completedAt: new Date().toISOString(),
-              detail: 'Place an asset pin and draw an intervention polygon before running analysis.',
+              detail: 'Place an asset pin on the map before running analysis.',
             });
           });
           return;
         }
 
         const coordinates: Coordinates = assetPin.location;
+
+        // If no polygon drawn, synthesise a default 5 ha riparian buffer centred on the pin
+        const effectivePolygon: InterventionPolygon = interventionPolygon ?? (() => {
+          const { lat, lng } = assetPin.location;
+          const dLat = 0.00225; // ~250 m at UK latitudes
+          const dLng = 0.00360; // ~250 m at ~52 °N
+          return {
+            id: uuidv4(),
+            interventionType: 'riparian_buffer' as const,
+            areaHa: 5,
+            drawnAt: new Date().toISOString(),
+            geometry: {
+              type: 'Polygon' as const,
+              coordinates: [[
+                [lng - dLng, lat - dLat],
+                [lng + dLng, lat - dLat],
+                [lng + dLng, lat + dLat],
+                [lng - dLng, lat + dLat],
+                [lng - dLng, lat - dLat],
+              ]],
+            },
+          };
+        })();
 
         // ── Step 1: Validate input
         set((s) => {
@@ -328,8 +351,8 @@ export const useNatureRiskStore = create<NatureRiskStore>()(
           const currentMode = get().mode ?? 'inland';
           const physicsLoaderForValidation = await import('@/services/physicsLoader');
           const validation = physicsLoaderForValidation.validateIntervention({
-            interventionType: interventionPolygon.interventionType,
-            areaHa: interventionPolygon.areaHa,
+            interventionType: effectivePolygon.interventionType,
+            areaHa: effectivePolygon.areaHa,
             mode: currentMode,
           });
           if (!validation.valid) {
@@ -385,9 +408,9 @@ export const useNatureRiskStore = create<NatureRiskStore>()(
           let result: PhysicsResult;
           if (currentMode === 'coastal') {
             result = physicsLoader.calculateCoastal({
-              habitatType: mapInterventionToHabitat(interventionPolygon.interventionType),
-              habitatAreaHa: interventionPolygon.areaHa,
-              habitatWidthM: Math.sqrt(interventionPolygon.areaHa * 10000),
+              habitatType: mapInterventionToHabitat(effectivePolygon.interventionType),
+              habitatAreaHa: effectivePolygon.areaHa,
+              habitatWidthM: Math.sqrt(effectivePolygon.areaHa * 10000),
               waterDepthM: liveDepthM,
               significantWaveHeightM: derivedWaveHeightM,
               wavePeriodS: 6.0 + liveTidalRangeM * 0.5,
@@ -398,8 +421,8 @@ export const useNatureRiskStore = create<NatureRiskStore>()(
             });
           } else {
             result = physicsLoader.calculateInland({
-              interventionType: interventionPolygon.interventionType,
-              interventionAreaHa: interventionPolygon.areaHa,
+              interventionType: effectivePolygon.interventionType,
+              interventionAreaHa: effectivePolygon.areaHa,
               catchmentAreaHa: (ukData.catchment as { data?: { areaHa?: number } })?.data?.areaHa ?? 500,
               slopeGradient: derivedSlope,
               soilType: ((ukData.soil as { data?: { soilType?: string } })?.data?.soilType as 'CLAY') ?? 'CLAY',
@@ -441,8 +464,8 @@ export const useNatureRiskStore = create<NatureRiskStore>()(
           const advisoryResult = await advisor.analyse({
             mode: currentState.mode ?? 'inland',
             userIntent: currentState.userIntent,
-            interventionType: interventionPolygon.interventionType,
-            interventionAreaHa: interventionPolygon.areaHa,
+            interventionType: effectivePolygon.interventionType,
+            interventionAreaHa: effectivePolygon.areaHa,
             assetDescription: assetPin.asset.description,
             physicsResult: currentState.physicsResult!,
             coordinates,

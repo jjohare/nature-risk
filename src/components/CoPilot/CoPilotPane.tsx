@@ -21,6 +21,7 @@ export function CoPilotPane() {
   const currentStep = useNatureRiskStore((s) => s.currentStep);
   const mode = useNatureRiskStore((s) => s.mode);
   const userIntent = useNatureRiskStore((s) => s.userIntent);
+  const assetPin = useNatureRiskStore((s) => s.assetPin);
   const appendMessage = useNatureRiskStore((s) => s.appendMessage);
   const setUserIntent = useNatureRiskStore((s) => s.setUserIntent);
   const runAnalysis = useNatureRiskStore((s) => s.runAnalysis);
@@ -373,7 +374,8 @@ export function CoPilotPane() {
           />
           <button
             onClick={() => handleSend()}
-            disabled={isAnalysing || !inputText.trim()}
+            disabled={isAnalysing || !inputText.trim() || !assetPin}
+            title={!assetPin ? 'Click the map to place an asset pin first' : undefined}
             aria-label="Run analysis"
             style={{
               padding: '9px 16px',
@@ -384,7 +386,7 @@ export function CoPilotPane() {
               fontSize: '0.82rem',
               fontWeight: 600,
               cursor:
-                isAnalysing || !inputText.trim() ? 'not-allowed' : 'pointer',
+                isAnalysing || !inputText.trim() || !assetPin ? 'not-allowed' : 'pointer',
               fontFamily: 'var(--font)',
               whiteSpace: 'nowrap',
               display: 'flex',
@@ -392,7 +394,7 @@ export function CoPilotPane() {
               gap: 6,
               minWidth: 90,
               justifyContent: 'center',
-              opacity: isAnalysing || !inputText.trim() ? 0.5 : 1,
+              opacity: isAnalysing || !inputText.trim() || !assetPin ? 0.5 : 1,
               transition: 'all 0.2s ease',
             }}
           >
