@@ -361,7 +361,7 @@ export async function fetchCatchmentData(coords: Coordinates): Promise<UKDataRes
           data: {
             catchmentId: primary['@id'] ?? primary.id ?? 'unknown',
             catchmentName: primary.label ?? primary.name ?? 'Unknown water body',
-            areaHa: 500,
+            areaHa: 50,
             boundaryGeometry: { type: 'Polygon', coordinates: [] },
           },
           source: 'live',
@@ -385,7 +385,7 @@ export async function fetchCatchmentData(coords: Coordinates): Promise<UKDataRes
     data: {
       catchmentId: `mock-${snap(coords.lat)}-${snap(coords.lng)}`,
       catchmentName,
-      areaHa: isSevernCatchment(coords.lat, coords.lng) ? 1200 : 500,
+      areaHa: isSevernCatchment(coords.lat, coords.lng) ? 1200 : 50,
       boundaryGeometry: { type: 'Polygon', coordinates: [] },
     },
     source: 'mock',

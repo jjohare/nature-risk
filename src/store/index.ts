@@ -250,7 +250,8 @@ export const useNatureRiskStore = create<NatureRiskStore>()(
 
         const coordinates: Coordinates = assetPin.location;
 
-        // If no polygon drawn, synthesise a default 5 ha riparian buffer centred on the pin
+        // If no polygon drawn, synthesise a default riparian buffer centred on the pin.
+        // Dimensions: dLat=0.00225° ≈ 250m, dLng=0.00360° ≈ 250m at 52°N → 500m×500m = 25 ha.
         const effectivePolygon: InterventionPolygon = interventionPolygon ?? (() => {
           const { lat, lng } = assetPin.location;
           const dLat = 0.00225; // ~250 m at UK latitudes
@@ -258,7 +259,7 @@ export const useNatureRiskStore = create<NatureRiskStore>()(
           return {
             id: uuidv4(),
             interventionType: 'riparian_buffer' as const,
-            areaHa: 5,
+            areaHa: 25,
             drawnAt: new Date().toISOString(),
             geometry: {
               type: 'Polygon' as const,
@@ -423,7 +424,7 @@ export const useNatureRiskStore = create<NatureRiskStore>()(
             result = physicsLoader.calculateInland({
               interventionType: effectivePolygon.interventionType,
               interventionAreaHa: effectivePolygon.areaHa,
-              catchmentAreaHa: (ukData.catchment as { data?: { areaHa?: number } })?.data?.areaHa ?? 500,
+              catchmentAreaHa: (ukData.catchment as { data?: { areaHa?: number } })?.data?.areaHa ?? 50,
               slopeGradient: derivedSlope,
               soilType: ((ukData.soil as { data?: { soilType?: string } })?.data?.soilType as 'CLAY') ?? 'CLAY',
               rainfallReturnPeriodYears: 100,
