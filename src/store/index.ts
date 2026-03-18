@@ -153,9 +153,11 @@ export const useNatureRiskStore = create<NatureRiskStore>()(
       // ── Event log
       eventLog: [],
 
-      // ── Config defaults
-      advisorMode: 'demo' as AdvisorMode,
-      proxyUrl: '',
+      // ── Config defaults — seed from build-time env vars
+      advisorMode: (import.meta.env.VITE_PROXY_URL || import.meta.env.VITE_ANTHROPIC_KEY)
+        ? ('live' as AdvisorMode)
+        : ('demo' as AdvisorMode),
+      proxyUrl: import.meta.env.VITE_PROXY_URL ?? '',
 
       // ── Map actions
       setViewport(v: Viewport) {
