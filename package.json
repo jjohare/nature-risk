@@ -12,7 +12,8 @@
     "preview": "vite preview",
     "lint": "eslint src --ext .ts,.tsx --max-warnings 0",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "worker:deploy": "cd worker && wrangler deploy"
   },
   "dependencies": {
     "@mapbox/mapbox-gl-draw": "^1.4.3",
@@ -32,17 +33,18 @@
   "devDependencies": {
     "@types/dompurify": "^2.4.0",
     "@types/node": "^22.19.15",
-    "@types/react": "^18.3.18",
+    "@types/react": "^18.3.28",
     "@types/react-dom": "^18.3.7",
     "@types/uuid": "^10.0.0",
-    "@typescript-eslint/eslint-plugin": "^8.21.0",
-    "@typescript-eslint/parser": "^8.21.0",
-    "@vitejs/plugin-react": "^4.3.4",
-    "eslint": "^9.18.0",
-    "typescript": "^5.7.3",
-    "vite": "^6.0.7",
-    "vite-plugin-top-level-await": "^1.4.4",
-    "vite-plugin-wasm": "^3.4.1",
-    "vitest": "^3.0.4"
+    "@typescript-eslint/eslint-plugin": "^8.57.1",
+    "@typescript-eslint/parser": "^8.57.1",
+    "@vitejs/plugin-react": "^4.7.0",
+    "eslint": "^9.39.4",
+    "typescript": "^5.9.3",
+    "vite": "^6.4.1",
+    "vite-plugin-top-level-await": "^1.6.0",
+    "vite-plugin-wasm": "^3.6.0",
+    "vitest": "^3.2.4",
+    "wrangler": "^4.75.0"
   }
 }

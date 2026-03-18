@@ -111,6 +111,10 @@ const ROUTES: Route[] = [
     keyInjection: 'header',
     keyHeader: 'x-api-key',
   },
+  {
+    prefix: '/api/natural-england/',
+    upstream: 'https://services.arcgis.com/JJzESW51TqeY9uat/arcgis/rest/services/',
+  },
 ];
 
 /* ------------------------------------------------------------------ */
@@ -269,6 +273,14 @@ export default {
       const key = env[route.keyEnvField];
       if (key && typeof key === 'string') {
         upstreamHeaders.set(route.keyHeader, key);
+      }
+    }
+
+    // Inject required Anthropic headers server-side for /api/claude/ route
+    // (clients in proxy-only mode never send these headers themselves)
+    if (url.pathname.startsWith('/api/claude/')) {
+      if (!upstreamHeaders.has('anthropic-version')) {
+        upstreamHeaders.set('anthropic-version', '2023-06-01');
       }
     }
 

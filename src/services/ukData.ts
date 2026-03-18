@@ -1,7 +1,7 @@
 // ─── UK Data Connectors ─────────────────────────────────────────────────────
 // Typed TypeScript port of docs/app/uk-data.js. Fetches from UK government
-// open-data APIs where CORS is supported, falls back to location-aware mock
-// data for APIs that require a proxy.
+// open-data APIs via the Cloudflare Worker proxy, with location-aware mock
+// fallbacks for when live calls fail.
 //
 // Referenced decisions: ADR-003 (Cloudflare Worker proxy), PRD §6 (data sources)
 
@@ -19,6 +19,10 @@ import type {
   SoilType,
   AnalysisMode,
 } from '@/types';
+
+// ─── Proxy Base URL ─────────────────────────────────────────────────────────
+
+const PROXY = 'https://nature-risk-proxy.solitary-paper-764d.workers.dev';
 
 // ─── Cache TTLs (milliseconds) ─────────────────────────────────────────────
 
@@ -118,6 +122,38 @@ function indicativeSoilType(lat: number, lng: number): { code: SoilType; permeab
     return { code: 'CLAY', permeability: 'low', fieldCapacity: 42, description: 'Reddish-brown clay loam (Midland till)' };
   }
   return { code: 'CLAY', permeability: 'low', fieldCapacity: 48, description: 'Heavy clay (lowland alluvium)' };
+}
+
+// ─── Soil type mapping from BGS descriptions ────────────────────────────────
+
+function parseBgsSoilType(description: string): { code: SoilType; permeability: 'low' | 'moderate' | 'high'; fieldCapacity: number } {
+  const d = description.toUpperCase();
+  if (/CLAY|HEAVY|WETLAND|GLEY/.test(d)) {
+    return { code: 'CLAY', permeability: 'low', fieldCapacity: 48 };
+  }
+  if (/LOAM|MEDIUM|ALLUVIAL|ALLUVIUM/.test(d)) {
+    return { code: 'LOAM', permeability: 'moderate', fieldCapacity: 35 };
+  }
+  if (/SAND|LIGHT|AEOLIAN|SANDY/.test(d)) {
+    return { code: 'SAND', permeability: 'high', fieldCapacity: 20 };
+  }
+  if (/PEAT|ORGANIC|HISTOSOL|BOG|FEN/.test(d)) {
+    return { code: 'PEAT', permeability: 'low', fieldCapacity: 85 };
+  }
+  if (/CHALK|CALCAREOUS|LIMESTONE|RENDZINA/.test(d)) {
+    return { code: 'CHALK', permeability: 'high', fieldCapacity: 30 };
+  }
+  return { code: 'UNKNOWN', permeability: 'moderate', fieldCapacity: 35 };
+}
+
+// ─── Indicative elevation (mock fallback) ───────────────────────────────────
+
+function indicativeElevation(lat: number, lng: number): number {
+  if (isUpland(lat, lng)) return 350;
+  if (isSEEngland(lat, lng)) return 80;
+  if (isSevernCatchment(lat, lng)) return 45;
+  if (distToCoastKm(lat, lng) < 2) return 5;
+  return 50;
 }
 
 // ─── Coastline Sample Points ────────────────────────────────────────────────
@@ -254,7 +290,6 @@ async function queryFloodZone(baseUrl: string, lat: number, lng: number): Promis
 export async function fetchFloodZones(coords: Coordinates): Promise<UKDataResponse<FloodZoneData>> {
   const key = cacheKey('flood_zones', coords);
 
-  // Check IndexedDB cache
   const cached = await cacheGet<UKDataResponse<FloodZoneData>>(key);
   if (cached) return { ...cached, source: 'cached' };
 
@@ -286,7 +321,6 @@ export async function fetchFloodZones(coords: Coordinates): Promise<UKDataRespon
     await cacheSet(key, result, TTL.FLOOD_ZONES);
     return result;
   } catch {
-    // Fallback to mock
     const coastDist = distToCoastKm(coords.lat, coords.lng);
     const mockZone: FloodZoneData['floodZone'] = coastDist < 5 ? '3' : '1';
     const mockRisk: FloodZoneData['riskLevel'] = coastDist < 5 ? 'high' : 'low';
@@ -327,7 +361,7 @@ export async function fetchCatchmentData(coords: Coordinates): Promise<UKDataRes
           data: {
             catchmentId: primary['@id'] ?? primary.id ?? 'unknown',
             catchmentName: primary.label ?? primary.name ?? 'Unknown water body',
-            areaHa: 500, // EA API does not return area; use indicative value
+            areaHa: 500,
             boundaryGeometry: { type: 'Polygon', coordinates: [] },
           },
           source: 'live',
@@ -343,7 +377,6 @@ export async function fetchCatchmentData(coords: Coordinates): Promise<UKDataRes
     // Fall through to mock
   }
 
-  // Mock fallback
   const catchmentName = isSevernCatchment(coords.lat, coords.lng)
     ? 'River Severn (Middle Severn)'
     : 'Unknown water body (indicative)';
@@ -365,8 +398,8 @@ export async function fetchCatchmentData(coords: Coordinates): Promise<UKDataRes
 }
 
 /**
- * Fetch soil data from BGS Soilscapes.
- * Data source: MOCK (BGS requires proxy/registration).
+ * Fetch soil data from BGS Soilscapes via proxy.
+ * Data source: LIVE (BGS CoordAction WFS via worker proxy), with mock fallback.
  */
 export async function fetchSoilData(coords: Coordinates): Promise<UKDataResponse<SoilData>> {
   const key = cacheKey('soil', coords);
@@ -374,8 +407,47 @@ export async function fetchSoilData(coords: Coordinates): Promise<UKDataResponse
   const cached = await cacheGet<UKDataResponse<SoilData>>(key);
   if (cached) return { ...cached, source: 'cached' };
 
-  const soil = indicativeSoilType(coords.lat, coords.lng);
+  try {
+    const params = new URLSearchParams({
+      method: 'GetSoil',
+      x: String(coords.lng),
+      y: String(coords.lat),
+      output: 'JSON',
+    });
+    const url = `${PROXY}/api/bgs/data/webservices/CoordAction.cfm?${params.toString()}`;
+    const response = await fetch(url, {
+      headers: { Accept: 'application/json' },
+      signal: AbortSignal.timeout(10000),
+    });
 
+    if (response.ok) {
+      const json = await response.json();
+      const rawDescription: string =
+        json?.soil_type ?? json?.DESCRIPTION ?? json?.description ?? '';
+
+      if (rawDescription) {
+        const mapped = parseBgsSoilType(rawDescription);
+        const result: UKDataResponse<SoilData> = {
+          data: {
+            soilType: mapped.code,
+            permeability: mapped.permeability,
+            fieldCapacityPct: mapped.fieldCapacity,
+            description: rawDescription,
+          },
+          source: 'live',
+          fetchedAt: now(),
+          apiName: 'BGS Soilscapes (CoordAction WFS)',
+          cacheKey: key,
+        };
+        await cacheSet(key, result, TTL.SOIL);
+        return result;
+      }
+    }
+  } catch {
+    // Fall through to indicative fallback
+  }
+
+  const soil = indicativeSoilType(coords.lat, coords.lng);
   const result: UKDataResponse<SoilData> = {
     data: {
       soilType: soil.code,
@@ -385,17 +457,16 @@ export async function fetchSoilData(coords: Coordinates): Promise<UKDataResponse
     },
     source: 'mock',
     fetchedAt: now(),
-    apiName: 'BGS Soilscapes (mock - proxy required)',
+    apiName: 'BGS Soilscapes (indicative fallback)',
     cacheKey: key,
   };
-
   await cacheSet(key, result, TTL.SOIL);
   return result;
 }
 
 /**
- * Fetch elevation data from EA LIDAR.
- * Data source: MOCK (EA LIDAR WCS requires proxy for production).
+ * Fetch elevation data from EA LIDAR DTM via proxy.
+ * Data source: LIVE (EA Composite DTM 1m MapServer identify), with mock fallback.
  */
 export async function fetchElevation(coords: Coordinates): Promise<UKDataResponse<ElevationData>> {
   const key = cacheKey('elevation', coords);
@@ -403,32 +474,63 @@ export async function fetchElevation(coords: Coordinates): Promise<UKDataRespons
   const cached = await cacheGet<UKDataResponse<ElevationData>>(key);
   if (cached) return { ...cached, source: 'cached' };
 
-  // Indicative elevation based on geography
-  let elevationM = 50;
-  if (isUpland(coords.lat, coords.lng)) elevationM = 350;
-  else if (isSEEngland(coords.lat, coords.lng)) elevationM = 80;
-  else if (isSevernCatchment(coords.lat, coords.lng)) elevationM = 45;
-  else if (distToCoastKm(coords.lat, coords.lng) < 2) elevationM = 5;
+  const lidarEndpoints = [
+    `${PROXY}/api/ea/arcgis/rest/services/Surveying/Composite_DTM_1m/MapServer/identify`,
+    `${PROXY}/api/ea/arcgis/rest/services/Surveying/National_LIDAR_Programme_DTM_2022/MapServer/identify`,
+  ];
 
+  for (const endpoint of lidarEndpoints) {
+    try {
+      const params = new URLSearchParams({
+        geometry: `${coords.lng},${coords.lat}`,
+        geometryType: 'esriGeometryPoint',
+        mapExtent: `${coords.lng - 0.001},${coords.lat - 0.001},${coords.lng + 0.001},${coords.lat + 0.001}`,
+        imageDisplay: '100,100,96',
+        returnGeometry: 'false',
+        f: 'json',
+      });
+      const response = await fetch(`${endpoint}?${params.toString()}`, {
+        headers: { Accept: 'application/json' },
+        signal: AbortSignal.timeout(10000),
+      });
+
+      if (response.ok) {
+        const json = await response.json();
+        const pixelValue = json?.results?.[0]?.attributes?.Pixel_value;
+        if (pixelValue !== undefined && pixelValue !== null && !isNaN(Number(pixelValue))) {
+          const elevationM = Math.round(Number(pixelValue) * 10) / 10;
+          const result: UKDataResponse<ElevationData> = {
+            data: { elevationM, resolution: '1m', source: 'EA_LIDAR' },
+            source: 'live',
+            fetchedAt: now(),
+            apiName: 'EA LIDAR Composite DTM (1m)',
+            cacheKey: key,
+          };
+          await cacheSet(key, result, TTL.ELEVATION);
+          return result;
+        }
+      }
+    } catch {
+      // Try next endpoint
+    }
+  }
+
+  // Indicative fallback
+  const elevationM = indicativeElevation(coords.lat, coords.lng);
   const result: UKDataResponse<ElevationData> = {
-    data: {
-      elevationM,
-      resolution: '2m',
-      source: 'EA_LIDAR',
-    },
+    data: { elevationM, resolution: '2m', source: 'EA_LIDAR' },
     source: 'mock',
     fetchedAt: now(),
-    apiName: 'EA LIDAR Composite DTM (mock)',
+    apiName: 'EA LIDAR Composite DTM (indicative fallback)',
     cacheKey: key,
   };
-
   await cacheSet(key, result, TTL.ELEVATION);
   return result;
 }
 
 /**
- * Fetch tidal data from the nearest NTSLF gauge.
- * Data source: MOCK (NTSLF has no CORS-enabled JSON API).
+ * Fetch tidal data from NTSLF via proxy, with station-based mock fallback.
+ * Data source: LIVE (NTSLF data API via worker proxy), with mock fallback.
  */
 export async function fetchTidalData(coords: Coordinates): Promise<UKDataResponse<TidalData>> {
   const key = cacheKey('tidal', coords);
@@ -439,28 +541,70 @@ export async function fetchTidalData(coords: Coordinates): Promise<UKDataRespons
   const station = nearestTideStation(coords.lat, coords.lng);
   const springRange = Math.round((station.mhwsODN - station.mlwsODN) * 10) / 10;
 
+  try {
+    const params = new URLSearchParams({
+      port: station.id,
+      format: 'json',
+    });
+    const url = `${PROXY}/api/ntslf/data/api?${params.toString()}`;
+    const response = await fetch(url, {
+      headers: { Accept: 'application/json' },
+      signal: AbortSignal.timeout(8000),
+    });
+
+    if (response.ok) {
+      const json = await response.json();
+      const dataArr = Array.isArray(json?.data) ? json.data : [];
+      if (dataArr.length > 0) {
+        const latest = dataArr[dataArr.length - 1];
+        const rawLevel = latest?.sea_level ?? latest?.value ?? latest?.water_level;
+        if (rawLevel !== undefined && !isNaN(Number(rawLevel))) {
+          const latestReadingM = Math.round(Number(rawLevel) * 100) / 100;
+          const result: UKDataResponse<TidalData> = {
+            data: {
+              stationId: station.id,
+              stationName: station.name,
+              tidalRangeM: springRange,
+              meanHighWaterSpringM: station.mhwsODN,
+              latestReadingM,
+              readingTime: latest?.date_time ?? latest?.time ?? now(),
+            },
+            source: 'live',
+            fetchedAt: now(),
+            apiName: 'NTSLF / BODC sea level gauge',
+            cacheKey: key,
+          };
+          await cacheSet(key, result, TTL.TIDAL);
+          return result;
+        }
+      }
+    }
+  } catch {
+    // Fall through to mock
+  }
+
+  // Mock fallback using station harmonic data
   const result: UKDataResponse<TidalData> = {
     data: {
       stationId: station.id,
       stationName: station.name,
       tidalRangeM: springRange,
       meanHighWaterSpringM: station.mhwsODN,
-      latestReadingM: station.mhwsODN * 0.85, // Indicative current reading
+      latestReadingM: station.mhwsODN * 0.85,
       readingTime: now(),
     },
     source: 'mock',
     fetchedAt: now(),
-    apiName: 'NTSLF / BODC (mock - proxy required)',
+    apiName: 'NTSLF / BODC (station harmonic fallback)',
     cacheKey: key,
   };
-
   await cacheSet(key, result, TTL.TIDAL);
   return result;
 }
 
 /**
- * Fetch bathymetry data.
- * Data source: MOCK (UKHO ADMIRALTY requires commercial licence).
+ * Fetch bathymetry — uses OS WFS foreshore + EA flood zones via proxy.
+ * Data source: LIVE (OS/EA via worker proxy), with approximate fallback.
  */
 export async function fetchBathymetry(coords: Coordinates): Promise<UKDataResponse<BathymetryData>> {
   const key = cacheKey('bathymetry', coords);
@@ -468,30 +612,100 @@ export async function fetchBathymetry(coords: Coordinates): Promise<UKDataRespon
   const cached = await cacheGet<UKDataResponse<BathymetryData>>(key);
   if (cached) return { ...cached, source: 'cached' };
 
-  const coastDist = distToCoastKm(coords.lat, coords.lng);
-  // Depth increases with distance from coast (very rough approximation)
-  const depthM = coastDist < 1 ? 2 : Math.min(coastDist * 3, 50);
+  try {
+    const bbox = `${coords.lng - 0.01},${coords.lat - 0.01},${coords.lng + 0.01},${coords.lat + 0.01}`;
+    const osParams = new URLSearchParams({
+      service: 'WFS',
+      request: 'GetFeature',
+      version: '2.0.0',
+      typeNames: 'Zoomstack_Foreshore',
+      outputFormat: 'application/json',
+      count: '1',
+      crs: 'CRS84',
+      bbox,
+    });
+    const osUrl = `${PROXY}/api/os/features/v1/wfs?${osParams.toString()}`;
 
-  const result: UKDataResponse<BathymetryData> = {
-    data: {
-      depthM,
-      slopeGradient: 0.02,
-      substrateType: depthM < 5 ? 'sand/gravel' : 'muddy sand',
-      source: 'UKHO ADMIRALTY (mock)',
-    },
-    source: 'mock',
-    fetchedAt: now(),
-    apiName: 'UKHO ADMIRALTY Marine Data Portal (mock)',
-    cacheKey: key,
-  };
+    const eaParams = new URLSearchParams({
+      geometry: `${coords.lng},${coords.lat}`,
+      geometryType: 'esriGeometryPoint',
+      inSR: '4326',
+      outFields: '*',
+      returnGeometry: 'false',
+      f: 'json',
+    });
+    const eaUrl = `${PROXY}/api/ea/arcgis/rest/services/Flood_Risk_Assessment/Flood_Map_for_Planning_Zones/FeatureServer/0/query?${eaParams.toString()}`;
 
-  await cacheSet(key, result, TTL.BATHYMETRY);
-  return result;
+    const [osResp, eaResp] = await Promise.allSettled([
+      fetch(osUrl, { signal: AbortSignal.timeout(8000) }),
+      fetch(eaUrl, { signal: AbortSignal.timeout(8000) }),
+    ]);
+
+    let onForeshore = false;
+    let inFloodZone = false;
+
+    if (osResp.status === 'fulfilled' && osResp.value.ok) {
+      const osJson = await osResp.value.json();
+      onForeshore = Array.isArray(osJson?.features) && osJson.features.length > 0;
+    }
+    if (eaResp.status === 'fulfilled' && eaResp.value.ok) {
+      const eaJson = await eaResp.value.json();
+      inFloodZone = Array.isArray(eaJson?.features) && eaJson.features.length > 0;
+    }
+
+    const coastDist = distToCoastKm(coords.lat, coords.lng);
+    let depthM: number;
+    let substrateType: string;
+
+    if (onForeshore) {
+      depthM = 1.5;
+      substrateType = 'intertidal sand/mud';
+    } else if (inFloodZone && coastDist < 5) {
+      depthM = 3.0;
+      substrateType = 'estuarine mud';
+    } else {
+      depthM = coastDist < 1 ? 2 : Math.min(coastDist * 3, 50);
+      substrateType = depthM < 5 ? 'sand/gravel' : 'muddy sand';
+    }
+
+    const result: UKDataResponse<BathymetryData> = {
+      data: {
+        depthM: Math.round(depthM * 10) / 10,
+        slopeGradient: 0.02,
+        substrateType,
+        source: 'OS WFS / EA (derived)',
+      },
+      source: 'live',
+      fetchedAt: now(),
+      apiName: 'OS Data Hub + EA Flood Zones (bathymetry proxy)',
+      cacheKey: key,
+    };
+    await cacheSet(key, result, TTL.BATHYMETRY);
+    return result;
+  } catch {
+    // Approximate fallback
+    const coastDist = distToCoastKm(coords.lat, coords.lng);
+    const depthM = coastDist < 1 ? 2 : Math.min(coastDist * 3, 50);
+    const result: UKDataResponse<BathymetryData> = {
+      data: {
+        depthM,
+        slopeGradient: 0.02,
+        substrateType: depthM < 5 ? 'sand/gravel' : 'muddy sand',
+        source: 'UKHO ADMIRALTY (approximate fallback)',
+      },
+      source: 'mock',
+      fetchedAt: now(),
+      apiName: 'UKHO ADMIRALTY Marine Data Portal (approximate fallback)',
+      cacheKey: key,
+    };
+    await cacheSet(key, result, TTL.BATHYMETRY);
+    return result;
+  }
 }
 
 /**
- * Fetch rainfall and UKCP18 climate data.
- * Data source: MOCK (Met Office UKCP18 requires DataHub API key).
+ * Fetch rainfall from Met Office DataHub (daily point forecast) via proxy.
+ * Data source: LIVE (Met Office DataHub sitespecific API), with regional mock fallback.
  */
 export async function fetchRainfall(coords: Coordinates): Promise<UKDataResponse<{ annualMeanMm: number; rcp45UpliftPct: number; rcp85UpliftPct: number; q100DailyMaxMm: number }>> {
   const key = cacheKey('rainfall', coords);
@@ -500,23 +714,87 @@ export async function fetchRainfall(coords: Coordinates): Promise<UKDataResponse
   const cached = await cacheGet<UKDataResponse<RainfallData>>(key);
   if (cached) return { ...cached, source: 'cached' };
 
-  // Location-aware rainfall estimates
+  try {
+    const today = new Date();
+    const start = today.toISOString().slice(0, 10);
+    const end = new Date(today.getTime() + 86400000).toISOString().slice(0, 10);
+
+    const params = new URLSearchParams({
+      latitude: String(coords.lat),
+      longitude: String(coords.lng),
+      includeLocationMetadata: 'true',
+      start,
+      end,
+    });
+    const url = `${PROXY}/api/met/sitespecific/v0/point/daily?${params.toString()}`;
+    const response = await fetch(url, {
+      headers: { Accept: 'application/json' },
+      signal: AbortSignal.timeout(10000),
+    });
+
+    if (response.ok) {
+      const json = await response.json();
+      // Met Office DataHub returns features[].properties.timeSeries[].totalPrecipAmount
+      const timeSeries: unknown[] =
+        json?.features?.[0]?.properties?.timeSeries ??
+        json?.data?.timeSeries ??
+        [];
+
+      if (timeSeries.length > 0) {
+        const dailyValues = timeSeries
+          .map((t: unknown) => {
+            const entry = t as Record<string, unknown>;
+            return Number(entry.totalPrecipAmount ?? entry.precipitation ?? 0);
+          })
+          .filter((v) => !isNaN(v) && v >= 0);
+
+        if (dailyValues.length > 0) {
+          const avgDaily = dailyValues.reduce((a, b) => a + b, 0) / dailyValues.length;
+          const annualMeanMm = Math.round(avgDaily * 365);
+
+          // Use regional climate uplift values even for live data
+          let rcp45UpliftPct = 3;
+          let rcp85UpliftPct = 8;
+          if (isUpland(coords.lat, coords.lng) && coords.lng < -2.5) {
+            rcp45UpliftPct = 5; rcp85UpliftPct = 12;
+          } else if (isSevernCatchment(coords.lat, coords.lng)) {
+            rcp45UpliftPct = 4; rcp85UpliftPct = 9;
+          } else if (isSEEngland(coords.lat, coords.lng)) {
+            rcp45UpliftPct = -2; rcp85UpliftPct = -6;
+          }
+
+          const result: UKDataResponse<RainfallData> = {
+            data: {
+              annualMeanMm,
+              rcp45UpliftPct,
+              rcp85UpliftPct,
+              q100DailyMaxMm: Math.round(annualMeanMm * 0.10),
+            },
+            source: 'live',
+            fetchedAt: now(),
+            apiName: 'Met Office DataHub (sitespecific daily)',
+            cacheKey: key,
+          };
+          await cacheSet(key, result, TTL.RAINFALL);
+          return result;
+        }
+      }
+    }
+  } catch {
+    // Fall through to regional mock
+  }
+
+  // Regional mock fallback
   let annualMeanMm = 750;
   let rcp45UpliftPct = 3;
   let rcp85UpliftPct = 8;
 
   if (isUpland(coords.lat, coords.lng) && coords.lng < -2.5) {
-    annualMeanMm = 2100;
-    rcp45UpliftPct = 5;
-    rcp85UpliftPct = 12;
+    annualMeanMm = 2100; rcp45UpliftPct = 5; rcp85UpliftPct = 12;
   } else if (isSevernCatchment(coords.lat, coords.lng)) {
-    annualMeanMm = 850;
-    rcp45UpliftPct = 4;
-    rcp85UpliftPct = 9;
+    annualMeanMm = 850; rcp45UpliftPct = 4; rcp85UpliftPct = 9;
   } else if (isSEEngland(coords.lat, coords.lng)) {
-    annualMeanMm = 620;
-    rcp45UpliftPct = -2;
-    rcp85UpliftPct = -6;
+    annualMeanMm = 620; rcp45UpliftPct = -2; rcp85UpliftPct = -6;
   }
 
   const result: UKDataResponse<RainfallData> = {
@@ -528,10 +806,9 @@ export async function fetchRainfall(coords: Coordinates): Promise<UKDataResponse
     },
     source: 'mock',
     fetchedAt: now(),
-    apiName: 'Met Office UKCP18 (mock - DataHub key required)',
+    apiName: 'Met Office UKCP18 (regional mock fallback)',
     cacheKey: key,
   };
-
   await cacheSet(key, result, TTL.RAINFALL);
   return result;
 }

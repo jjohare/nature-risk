@@ -295,19 +295,21 @@ export const useNatureRiskStore = create<NatureRiskStore>()(
         let ukData: Record<string, unknown> = {};
         try {
           const ukDataService = await import('@/services/ukData');
-          const [floodZones, catchment, soil, elevation, rainfall] = await Promise.all([
+          const [floodZones, catchment, soil, elevation, rainfall, tidal, bathymetry] = await Promise.all([
             ukDataService.fetchFloodZones(coordinates),
             ukDataService.fetchCatchmentData(coordinates),
             ukDataService.fetchSoilData(coordinates),
             ukDataService.fetchElevation(coordinates),
             ukDataService.fetchRainfall(coordinates),
+            ukDataService.fetchTidalData(coordinates),
+            ukDataService.fetchBathymetry(coordinates),
           ]);
-          ukData = { floodZones, catchment, soil, elevation, rainfall };
+          ukData = { floodZones, catchment, soil, elevation, rainfall, tidal, bathymetry };
           set((s) => {
             const idx = s.actionStream.findIndex((a) => a.id === dataStep.id);
             if (idx !== -1) Object.assign(s.actionStream[idx], completeActionStep(dataStep, 'Data fetched'));
             appendEvent(s, 'DataFetched', {
-              sources: ['flood_zones', 'catchment', 'soil', 'elevation', 'rainfall'],
+              sources: ['flood_zones', 'catchment', 'soil', 'elevation', 'rainfall', 'tidal', 'bathymetry'],
               lat: coordinates.lat,
               lng: coordinates.lng,
             });
@@ -317,6 +319,40 @@ export const useNatureRiskStore = create<NatureRiskStore>()(
             const idx = s.actionStream.findIndex((a) => a.id === dataStep.id);
             if (idx !== -1) Object.assign(s.actionStream[idx], failActionStep(dataStep, String(err)));
           });
+        }
+
+        // ── Step 3b: Validate intervention against classified mode
+        {
+          const currentMode = get().mode ?? 'inland';
+          const physicsLoaderForValidation = await import('@/services/physicsLoader');
+          const validation = physicsLoaderForValidation.validateIntervention({
+            interventionType: interventionPolygon.interventionType,
+            areaHa: interventionPolygon.areaHa,
+            mode: currentMode,
+          });
+          if (!validation.valid) {
+            set((s) => {
+              s.actionStream.push({
+                id: uuidv4(),
+                label: 'Intervention validation warning',
+                status: 'error',
+                startedAt: new Date().toISOString(),
+                completedAt: new Date().toISOString(),
+                detail: [validation.message, ...validation.suggestions].join(' '),
+              });
+            });
+          } else if (validation.scaleWarnings.length > 0) {
+            set((s) => {
+              s.actionStream.push({
+                id: uuidv4(),
+                label: 'Intervention scale warning',
+                status: 'done',
+                startedAt: new Date().toISOString(),
+                completedAt: new Date().toISOString(),
+                detail: validation.scaleWarnings.join(' '),
+              });
+            });
+          }
         }
 
         // ── Step 4: Run physics engine
@@ -329,16 +365,31 @@ export const useNatureRiskStore = create<NatureRiskStore>()(
           const physicsLoader = await import('@/services/physicsLoader');
           await physicsLoader.initPhysics();
 
+          // Extract live tidal + bathymetry params where available
+          const tidalData = ukData.tidal as { data?: { tidalRangeM?: number; meanHighWaterSpringM?: number } } | undefined;
+          const liveTidalRangeM = tidalData?.data?.tidalRangeM ?? 4.0;
+          const liveMhwsM = tidalData?.data?.meanHighWaterSpringM ?? 3.0;
+          const derivedWaveHeightM = Math.max(0.5, Math.min(liveTidalRangeM * 0.25, 3.0));
+
+          const bathyData = ukData.bathymetry as { data?: { depthM?: number; slopeGradient?: number } } | undefined;
+          const liveDepthM = bathyData?.data?.depthM ?? Math.max(1.0, liveMhwsM * 0.5);
+
+          // Derive slope gradient from elevation data (rise/run over ~1 km horizontal)
+          const elevData = ukData.elevation as { data?: { elevationM?: number } } | undefined;
+          const elevM = elevData?.data?.elevationM ?? 50;
+          // Simple terrain slope estimate: elevation / 1000m catchment scale, clamped to plausible range
+          const derivedSlope = Math.max(0.002, Math.min(elevM / 5000, 0.15));
+
           let result: PhysicsResult;
           if (currentMode === 'coastal') {
             result = physicsLoader.calculateCoastal({
               habitatType: mapInterventionToHabitat(interventionPolygon.interventionType),
               habitatAreaHa: interventionPolygon.areaHa,
               habitatWidthM: Math.sqrt(interventionPolygon.areaHa * 10000),
-              waterDepthM: 3.0,
-              significantWaveHeightM: 1.5,
-              wavePeriodS: 8.0,
-              tidalRangeM: 4.0,
+              waterDepthM: liveDepthM,
+              significantWaveHeightM: derivedWaveHeightM,
+              wavePeriodS: 6.0 + liveTidalRangeM * 0.5,
+              tidalRangeM: liveTidalRangeM,
               seaLevelRiseM: 0.22,
               distanceToAssetM: 500,
               ukcp18Scenario: 'rcp85',
@@ -348,7 +399,7 @@ export const useNatureRiskStore = create<NatureRiskStore>()(
               interventionType: interventionPolygon.interventionType,
               interventionAreaHa: interventionPolygon.areaHa,
               catchmentAreaHa: (ukData.catchment as { data?: { areaHa?: number } })?.data?.areaHa ?? 500,
-              slopeGradient: 0.02,
+              slopeGradient: derivedSlope,
               soilType: ((ukData.soil as { data?: { soilType?: string } })?.data?.soilType as 'CLAY') ?? 'CLAY',
               rainfallReturnPeriodYears: 100,
               rainfallIntensityMmHr: 30,

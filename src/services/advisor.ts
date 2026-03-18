@@ -19,7 +19,10 @@ import { DISCLAIMER_TEXT } from '@/types';
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
-const ANTHROPIC_DIRECT_URL = 'https://api.anthropic.com/v1/messages';
+const WORKER_PROXY_BASE = import.meta.env.VITE_PROXY_URL ?? '';
+const ANTHROPIC_DIRECT_URL = WORKER_PROXY_BASE
+  ? `${WORKER_PROXY_BASE}/api/claude/messages`
+  : 'https://api.anthropic.com/v1/messages';
 const CLAUDE_MODEL = 'claude-sonnet-4-6';
 const MAX_TOKENS = 1500;
 const SESSION_KEY_API_KEY = 'nature_risk_advisor_api_key';
@@ -68,7 +71,11 @@ let _config: AdvisorConfig = {
   proxyUrl: null,
 };
 
-// Rehydrate from sessionStorage
+// Seed defaults from Vite env vars (set at build time)
+if (WORKER_PROXY_BASE) _config.proxyUrl = WORKER_PROXY_BASE;
+if (import.meta.env.VITE_ANTHROPIC_KEY) _config.apiKey = import.meta.env.VITE_ANTHROPIC_KEY;
+
+// Rehydrate from sessionStorage (overrides env defaults if user has configured manually)
 try {
   const savedKey = sessionStorage.getItem(SESSION_KEY_API_KEY);
   const savedProxy = sessionStorage.getItem(SESSION_KEY_PROXY_URL);
@@ -184,7 +191,7 @@ async function callClaude(userMessage: string): Promise<string> {
   }
 
   if (response.status === 401) {
-    throw createClaudeError('Unauthorised', 'Invalid API key — check your Anthropic Console and re-enter your key.');
+    throw createClaudeError('Unauthorised', 'Invalid API key — check your advisory service configuration.');
   }
 
   if (!response.ok) {

@@ -5,11 +5,7 @@ import topLevelAwait from 'vite-plugin-top-level-await';
 import { fileURLToPath, URL } from 'node:url';
 
 export default defineConfig({
-  plugins: [
-    react(),
-    wasm(),
-    topLevelAwait(),
-  ],
+  plugins: [react(), wasm(), topLevelAwait()],
   resolve: {
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url)),
